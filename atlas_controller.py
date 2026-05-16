@@ -83,7 +83,7 @@ while robot.step(timestep) != -1:
     dz = target_position[2] - turret_position[2]
     
     #Calculating horizontal distance of the projectile from turret POV
-    horizontal_distance = math.sqrt(dx**2 + dy**2)
+    horizontal_distance = math.sqrt(dy**2 + dx**2)
 
     #Calculating pan angle and tilt angle:
     pan_angle = math.atan2(dy, dx)
@@ -94,6 +94,4 @@ while robot.step(timestep) != -1:
     tilt.setPosition(tilt_angle)
     print("Robot PAN MOTOR Rotation: ", pan_angle)
     print("Robot TILT MOTOR Rotation: ", tilt_angle)
-    
-    pass
-    
+        

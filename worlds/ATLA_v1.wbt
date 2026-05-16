@@ -167,6 +167,26 @@ Robot {
                     creaseAngle 1.5
                   }
                 }
+                Transform {
+                  translation 0 0 4
+                  rotation 1 0 0 -1.5708
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor 1 0 0
+                        emissiveColor 1 0 0
+                        roughness 1
+                        metalness 0
+                        transparency 0.3
+                      }
+                      geometry Cylinder {
+                        height 8
+                        radius 0.008
+                        subdivision 6
+                      }
+                    }
+                  ]
+                }
               ]
               name "TILT_PLATFORM"
               model "box"
