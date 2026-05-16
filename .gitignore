@@ -1,2 +1,3 @@
 __pycache__/
-*.wbproj
+worlds/.*.wbproj
+worlds/.*.jpg
