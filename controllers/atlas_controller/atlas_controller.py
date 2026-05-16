@@ -36,21 +36,23 @@ launch_delay = 2000 #2 secs
 projectile_system.launch_projectile()
 projectile_launched = True
 
+#turret variables to follow the projectile:
+turret_position = robot.getSelf().getPosition()
+
 #----------------------MAIN LOOP ---------------------------------
 while robot.step(timestep) != -1:
-    #TURRET SYSTEM (TEMP) - trying to make it rotate back and forward
-    pan_angle = math.sin(time) * 1.57
-    tilt_angle = math.sin(time) * 0.5
+    #TURRET SYSTEM (TESTING) - trying to make it rotate back and forward
+    #pan_angle = math.sin(time) * 1.57
+    #tilt_angle = math.sin(time) * 0.5
     
-    pan.setPosition(pan_angle)
-    tilt.setPosition(tilt_angle)
-    
-    time += 0.02
+    #pan.setPosition(pan_angle)
+    #tilt.setPosition(tilt_angle)
+    #time += 0.02
     
     #Confirmation of the testing
-    print("Robot PAN MOTOR Rotation: ", pan_angle)
-    print("Robot TILT MOTOR Rotation: ", tilt_angle)
-   
+    #print("Robot PAN MOTOR Rotation: ", pan_angle)
+    #print("Robot TILT MOTOR Rotation: ", tilt_angle)
+  #-----------------------------PROJECTILE SYSTEM------------------------- 
     #Getting the projectile's positioning and velocity
     projectile_position = projectile.getPosition()
     projectile_velocity = projectile.getVelocity()
@@ -72,10 +74,26 @@ while robot.step(timestep) != -1:
         projectile_launched = True
         waiting_for_launch = False
     
-    
     #Working through the radar system:
     target_position = radar.get_target_position()
     print("Projectile Position: ", target_position)
-
+  #-----------------------------TURRET SYSTEM-------------------------   
+    dx = target_position[0] - turret_position[0]
+    dy = target_position[1] - turret_position[1]
+    dz = target_position[2] - turret_position[2]
+    
+    #Calculating horizontal distance of the projectile from turret POV
+    horizontal_distance = math.sqrt(dx**2 + dz**2)
+    
+    #Calculating pan angle and tilt angle:
+    pan_angle = math.atan2(dx, dz)
+    tilt_angle = math.atan2(dy, horizontal_distance)
+    
+    #Setting the motors so that pan adn tilt follows the porjectile:
+    pan.setPosition(pan_angle)
+    tilt.setPosition(tilt_angle)
+    print("Robot PAN MOTOR Rotation: ", pan_angle)
+    print("Robot TILT MOTOR Rotation: ", tilt_angle)
+    
     pass
     
