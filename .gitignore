@@ -1,3 +1,6 @@
 __pycache__/
 worlds/.*.wbproj
 worlds/.*.jpg
+.claude/
+docs/superpowers/
+.venv/
