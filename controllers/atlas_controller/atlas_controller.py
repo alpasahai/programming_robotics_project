@@ -28,8 +28,12 @@ radar = RadarSystem(projectile)
 projectile_system = ProjectileSystem(projectile)
 
 #Ensuring that it intially launches:
+projectile_launched = False
+reset_time = 0
+launch_delay = 2000 #2 secs
+
 projectile_system.launch_projectile()
-resetting = False #This is to ensure that projectile properly relaunches
+projectile_launched = True
 
 #----------------------MAIN LOOP ---------------------------------
 while robot.step(timestep) != -1:
@@ -49,12 +53,17 @@ while robot.step(timestep) != -1:
     #Getting the projectile launching and resetting:
     projectile_position = projectile.getPosition()
     
-    if projectile_position[1] < 0.05 and not resetting:
+    current_time = robot.getTime() * 1000 #converting to ms
+    #Detecting when the projectile hits the ground:
+    if projectile_position[1] < 0.05 and projectile_launched:
         projectile_system.reset_projectile()
-        resetting = True
-    elif resetting:
+        reset_time = current_time
+        projectile_launched = False
+        
+    #Relaunching after the delay
+    if not projectile_launched and (current_time - reset_time > launch_delay):
         projectile_system.launch_projectile()
-        resetting = False
+        projectile_launched = True
     
     
     #Working through the radar system:
