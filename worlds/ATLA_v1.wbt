@@ -5,22 +5,25 @@ IMPORTABLE EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R20
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
 IMPORTABLE EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/joints/protos/HingeJointWithBacklash.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
 
 WorldInfo {
 }
 Viewpoint {
-  orientation 0.12378761544018041 0.026529922718127597 -0.9919540258823512 2.72261977967724
-  position 8.157799009686482 3.1395346608536516 2.7158993680674275
+  orientation 0.1731787448843098 0.03261079363612663 -0.9843503738297239 2.7750162765835182
+  position 9.951712321629044 3.690609392364916 4.152775103379987
 }
 Floor {
+  appearance Parquetry {
+  }
 }
 TexturedBackground {
 }
 TexturedBackgroundLight {
 }
 DEF PROJECTILE Solid {
-  translation 2.59591e-05 -2.53 0.049843
-  rotation -3.33772e-20 3.25835e-15 1 -3.1415853071795863
+  translation 2.59591e-05 -2.53 0.04984303999999999
+  rotation -3.337720000000082e-20 3.258350000000054e-15 1 -3.141585307179556
   children [
     DEF BALL_SHAPE Shape {
       appearance PBRAppearance {
@@ -52,12 +55,14 @@ DEF PROJECTILE Solid {
       angular 0.33
     }
   }
+  linearVelocity 0 0 -2.7231689385293186e-18
 }
 Robot {
   translation -0.82 -0.04 0.06
   children [
     HingeJoint {
       jointParameters HingeJointParameters {
+        position -0.01081949208034581
         axis 0 0 1
       }
       device [
@@ -66,10 +71,12 @@ Robot {
         }
       ]
       endPoint Solid {
-        translation 6.938893903907228e-18 -6.938893903907228e-18 0.09
+        translation 6.8634139266095445e-18 -7.013561612432298e-18 0.08999999999999998
+        rotation 0 0 -1 0.010819492080358496
         children [
           HingeJoint {
             jointParameters HingeJointParameters {
+              position -0.003445698114759812
               axis 0 1 0
             }
             device [
@@ -78,8 +85,8 @@ Robot {
               }
             ]
             endPoint Solid {
-              translation 0 0 0.09
-              rotation 0 1 0 0
+              translation -0.000310112216675644 0 0.08999946572293119
+              rotation 0 -1 0 0.0034456981147944375
               children [
                 Camera {
                   translation 0 0 0.05
