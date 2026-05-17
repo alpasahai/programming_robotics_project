@@ -6,7 +6,7 @@ import math
 import random
 from typing import NamedTuple
 
-from geometry import azimuth_elevation_range
+from geometry import azimuth_elevation_range, angle_diff
 
 
 class Detection(NamedTuple):
@@ -50,9 +50,9 @@ class SearchRadar:
     Note: ``radar_position`` is used for gating only. ``Detection.position``
     is always reported relative to ``turret_position`` (ADR-0006 membrane).
 
-    Deferred scan parameters (``beam_width``, ``scan_rate``, ``track_timeout``)
-    are accepted and stored now so the constructor signature is stable, but no
-    scan logic is active yet (Tasks 3–4).
+    Scan beam parameters (``beam_width``, ``scan_rate``) rotate a narrow beam
+    through all azimuths; see Task 3. Track timeout (``track_timeout``) is
+    deferred (Task 4).
 
     See ADR-0003 for the continuous sensor fusion rationale.
     See ADR-0006 for the sensor-membrane and track-id identity contract.
@@ -94,10 +94,12 @@ class SearchRadar:
             vertical_fov:    Full vertical field of view in radians. A
                              projectile is accepted only when
                              |elevation| ≤ vertical_fov / 2.
-            beam_width:      (Deferred — Task 3) Half-power beam width in
-                             radians. Stored but not yet used in scan logic.
-            scan_rate:       (Deferred — Task 3) Scan rate in radians per
-                             second. Stored but not yet used in scan logic.
+            beam_width:      Half-power beam width in radians. The beam is
+                             gated to accept targets within beam_width / 2
+                             radians of the current scan azimuth.
+            scan_rate:       Scan rate in radians per update() call (per
+                             simulation step). The beam azimuth advances by
+                             this amount each update().
             track_timeout:   (Deferred — Task 4) Number of missed updates
                              before a track is dropped. Stored but not yet
                              used.
@@ -112,9 +114,11 @@ class SearchRadar:
         self._timestep_ms = timestep_ms
         self._max_range = max_range
         self._half_fov = vertical_fov / 2.0
-        # Deferred scan parameters (Tasks 3–4): stored, not yet used.
+        # Scan beam parameters (Task 3): beam advances and gates by azimuth.
         self._beam_width = beam_width
         self._scan_rate = scan_rate
+        self._beam_azimuth = 0.0  # initialized to 0; advances each update()
+        # Deferred: track_timeout for Task 4.
         self._track_timeout = track_timeout
         self._rng = rng if rng is not None else random.Random()
         self._detections: list[Detection] = []
@@ -122,32 +126,42 @@ class SearchRadar:
         self._target_position: list[float] | None = None
 
     def update(self) -> None:
-        """Read all projectile positions, gate by range and FOV, add noise.
+        """Read all projectile positions, gate by range/elevation/azimuth, add noise.
 
         For each projectile in ``self._projectiles`` (enumerated so that the
         index serves as track_id per ADR-0006):
-        1. Reads its world-frame position via ``getPosition()``.
-        2. Computes azimuth, elevation, and range relative to radar_position
+        1. Advances the beam azimuth by ``scan_rate`` (at the start of the update).
+        2. Reads its world-frame position via ``getPosition()``.
+        3. Computes azimuth, elevation, and range relative to radar_position
            using ``geometry.azimuth_elevation_range``.
-        3. Rejects the projectile if range > max_range or
-           |elevation| > vertical_fov / 2.
-        4. For accepted projectiles: subtracts turret_position (not
+        4. Rejects the projectile if:
+           - range > max_range, OR
+           - |elevation| > vertical_fov / 2, OR
+           - |angle_diff(proj_azimuth, beam_azimuth)| > beam_width / 2
+           (all three gates must pass).
+        5. For accepted projectiles: subtracts turret_position (not
            radar_position) and adds independent Gaussian noise on each axis.
-        5. Stores a ``Detection(track_id=index, position=noisy_vector)``.
+        6. Stores a ``Detection(track_id=index, position=noisy_vector)``.
 
         The locked target (set via ``set_target()``) is only updated when it
-        passes the gate. If it fails the gate in a given cycle,
-        ``get_target_position()`` retains the previous reading (stale but
-        non-None, does not crash).
+        passes all gates. If it fails in a given cycle, ``get_target_position()``
+        retains the previous reading (stale but non-None, does not crash).
         """
+        # Advance the beam azimuth at the start of the update, before gating.
+        # This ensures each update cycle uses a consistent beam position.
+        self._beam_azimuth = (self._beam_azimuth + self._scan_rate) % (2 * math.pi)
+
         self._detections = []
         for index, proj in enumerate(self._projectiles):
             world = proj.getPosition()
-            _az, elevation, rng = azimuth_elevation_range(self._radar_position, world)
+            az, elevation, rng = azimuth_elevation_range(self._radar_position, world)
 
             if rng > self._max_range:
                 continue
             if abs(elevation) > self._half_fov:
+                continue
+            # Azimuth gate: target must be within beam_width/2 of current beam azimuth.
+            if abs(angle_diff(az, self._beam_azimuth)) > self._beam_width / 2.0:
                 continue
 
             noisy = [
@@ -155,7 +169,7 @@ class SearchRadar:
                 for i in range(3)
             ]
             self._detections.append(Detection(track_id=index, position=noisy))
-            # Reached only when the projectile passed both gates above:
+            # Reached only when the projectile passed all three gates above:
             # the locked target is not refreshed when gated out, so its
             # stale value is retained until the Task 4 track buffer lands.
             if proj is self._target_node:

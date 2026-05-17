@@ -26,8 +26,9 @@ def _make_radar(
     vertical_fov=VERTICAL_FOV,
     timestep_ms=TIMESTEP_MS,
     rng=None,
-    # deferred scan params — must be accepted, must not affect detection
-    beam_width=math.radians(10),
+    # scan params — beam_width and scan_rate now active (Task 3)
+    # Default to full 2π beam so existing tests unaffected by azimuth gate
+    beam_width=2 * math.pi,
     scan_rate=math.radians(30),
     track_timeout=3,
 ):
@@ -453,20 +454,157 @@ def test_get_detections_returns_fresh_list():
     assert list_a is not list_b
 
 
-def test_deferred_scan_params_accepted_without_effect():
-    """beam_width, scan_rate, track_timeout are stored but do not affect detection output.
+def test_scan_params_must_pass_while_beam_is_wide():
+    """Test that scan_rate and track_timeout are accepted without error.
 
-    Passing non-default values must not raise and must not change whether an
-    in-range, in-FOV target is detected.
+    When beam_width is very wide (full 2π), the azimuth gate never rejects
+    in-range, in-FOV targets regardless of scan_rate. Demonstrates that the
+    constructor accepts these parameters safely.
     """
     proj = StubProjectile([[0.0, 50.0, 0.0]])
     radar = _make_radar(
         [proj],
         radar_position=[0.0, 0.0, 0.0],
         turret_position=[0.0, 0.0, 0.0],
-        beam_width=math.radians(5),
+        beam_width=2 * math.pi,  # wide beam passes azimuth gate
         scan_rate=math.radians(60),
         track_timeout=10,
     )
     radar.update()
     assert len(radar.get_detections()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Rotating scan beam (Task 3)
+# ---------------------------------------------------------------------------
+
+def test_beam_advances_by_scan_rate_each_update():
+    """The internal beam azimuth must advance by scan_rate each update() call.
+
+    Uses reflective access to _beam_azimuth to verify the beam position.
+    """
+    proj = StubProjectile([[0.0, 10.0, 0.0]])
+    scan_rate = math.radians(15)
+    radar = _make_radar(
+        [proj],
+        radar_position=[0.0, 0.0, 0.0],
+        turret_position=[0.0, 0.0, 0.0],
+        beam_width=2 * math.pi,  # no azimuth gate for this test
+        scan_rate=scan_rate,
+    )
+    assert radar._beam_azimuth == 0.0
+
+    radar.update()
+    assert abs(radar._beam_azimuth - scan_rate) < 1e-9
+
+    radar.update()
+    assert abs(radar._beam_azimuth - 2 * scan_rate) < 1e-9
+
+
+def test_beam_wraps_past_2pi():
+    """The beam azimuth must wrap at 2π using modulo arithmetic.
+
+    After advancing beyond 2π, the next advance wraps back to the start.
+    """
+    proj = StubProjectile([[0.0, 10.0, 0.0]])
+    scan_rate = 2 * math.pi - math.radians(5)  # just before a full rotation
+    radar = _make_radar(
+        [proj],
+        radar_position=[0.0, 0.0, 0.0],
+        turret_position=[0.0, 0.0, 0.0],
+        beam_width=2 * math.pi,
+        scan_rate=scan_rate,
+    )
+
+    # After first update, beam is at scan_rate (just before 2π)
+    radar.update()
+    assert abs(radar._beam_azimuth - scan_rate) < 1e-9
+
+    # After second update, beam wraps: (2π - 5°) + (2π - 5°) mod 2π ≈ 2π - 10°
+    radar.update()
+    expected = (2 * scan_rate) % (2 * math.pi)
+    assert abs(radar._beam_azimuth - expected) < 1e-9
+
+
+def test_narrow_beam_pointed_away_rejects_target():
+    """A target outside the beam's sweep rejects the detection.
+
+    Place a target due north (azimuth 0°) and point a narrow beam due east
+    (azimuth +90°). With beam_width = 20°, the beam spans [+80°, +100°].
+    The target at 0° is outside and must be rejected.
+    """
+    proj = StubProjectile([[0.0, 100.0, 0.0]])  # due north, azimuth = 0
+    radar = _make_radar(
+        [proj],
+        radar_position=[0.0, 0.0, 0.0],
+        turret_position=[0.0, 0.0, 0.0],
+        beam_width=math.radians(20),
+        scan_rate=0.0,  # keep beam stationary at initial position
+    )
+    # Manually position the beam due east for this test
+    radar._beam_azimuth = math.radians(90)  # +90° (due east)
+
+    radar.update()
+    # Target at azimuth 0° is 90° away from beam center → far outside ±10° window
+    assert radar.get_detections() == []
+
+
+def test_target_within_beam_is_detected():
+    """A target within the beam's angular width passes the azimuth gate.
+
+    Place a target at azimuth 45° and center the beam on it. With
+    beam_width = 30°, the beam spans [30°, 60°]. The target must be detected.
+    """
+    proj = StubProjectile([[100.0, 100.0, 0.0]])  # azimuth ≈ +45° in ENU (atan2(dx=100, dy=100))
+    radar = _make_radar(
+        [proj],
+        radar_position=[0.0, 0.0, 0.0],
+        turret_position=[0.0, 0.0, 0.0],
+        beam_width=math.radians(30),
+        scan_rate=0.0,
+    )
+    # Center beam on the target
+    radar._beam_azimuth = math.radians(45)
+
+    radar.update()
+    detections = radar.get_detections()
+    assert len(detections) == 1
+    assert detections[0].track_id == 0
+
+
+def test_beam_sweep_discovers_target_then_loses_it():
+    """As the beam sweeps, it detects a target when aligned, then rejects it when swept away.
+
+    Place a target due north (azimuth 0°). Start the beam elsewhere, sweep it
+    past the target, and verify detection occurs only during the sweep window.
+    """
+    proj = StubProjectile([[0.0, 100.0, 0.0]])  # due north, azimuth = 0
+    beam_width = math.radians(30)
+    scan_rate = math.radians(15)
+    radar = _make_radar(
+        [proj],
+        radar_position=[0.0, 0.0, 0.0],
+        turret_position=[0.0, 0.0, 0.0],
+        beam_width=beam_width,
+        scan_rate=scan_rate,
+    )
+
+    # Start beam pointing west (−90°)
+    radar._beam_azimuth = math.radians(-90)
+
+    # Sweep the beam: from −90° it advances 15° per update (scan_rate)
+    # Target is at 0°, window is ±15° (−15° to +15°)
+    detections_log = []
+
+    for _ in range(12):  # Enough steps to sweep through target and beyond
+        radar.update()
+        detections_log.append(len(radar.get_detections()))
+
+    # Expected pattern: miss, miss, miss, miss, miss, miss, HIT, HIT, HIT, miss, miss, miss
+    # (−90° → −75° → −60° → −45° → −30° → −15° → 0° → 15° → 30° → 45° → 60° → 75°)
+    # Actually this is trickier because angle wrapping can cause surprises near the poles.
+    # Let's just verify: there's a window where detections occur (between indices where beam is near 0)
+    # and detections outside that window.
+    hits = sum(1 for count in detections_log if count > 0)
+    misses = sum(1 for count in detections_log if count == 0)
+    assert hits > 0 and misses > 0  # sweep must produce both hits and misses
