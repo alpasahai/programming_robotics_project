@@ -317,12 +317,40 @@ def test_locked_target_outside_fov_leaves_target_position_unchanged():
     )
     radar.set_target(0)
     radar.update()
-    assert radar.get_target_position() is not None
+    first_pos = radar.get_target_position()
+    assert first_pos == [0.0, 100.0, 1.0]
 
-    radar.update()
-    # Stale value preserved — no crash
+    radar.update()                           # target now outside FOV
+    # Stale value preserved — exact first-update reading, no crash
     result = radar.get_target_position()
-    assert result is not None               # still the old reading
+    assert result == [0.0, 100.0, 1.0]      # stale — not updated this cycle
+
+
+def test_gate_uses_radar_position_not_turret_position():
+    """The range gate must measure from radar_position, not turret_position.
+
+    Radar and turret sit far apart. The projectile is placed so the gate
+    result flips depending on which frame is used:
+      - distance from radar  ≈ 10 m  → inside max_range (50 m)
+      - distance from turret ≈ 510 m → outside max_range (50 m)
+    A correct implementation gates off the radar and detects the projectile;
+    a bug gating off the turret would reject it.
+    """
+    radar_pos = [0.0, 0.0, 0.0]
+    turret_pos = [0.0, 500.0, 0.0]           # 500 m north of the radar
+    proj = StubProjectile([[0.0, 10.0, 0.0]])  # 10 m from radar, 490 m from turret
+    radar = _make_radar(
+        [proj],
+        radar_position=radar_pos,
+        turret_position=turret_pos,
+        max_range=50.0,
+        vertical_fov=math.pi,
+    )
+    radar.update()
+    detections = radar.get_detections()
+    assert len(detections) == 1              # gated off radar → in range
+    # And the output frame is still turret-relative (490 m south of turret).
+    assert detections[0].position == [0.0, 10.0 - 500.0, 0.0]
 
 
 # ---------------------------------------------------------------------------

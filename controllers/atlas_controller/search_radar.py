@@ -155,6 +155,9 @@ class SearchRadar:
                 for i in range(3)
             ]
             self._detections.append(Detection(track_id=index, position=noisy))
+            # Reached only when the projectile passed both gates above:
+            # the locked target is not refreshed when gated out, so its
+            # stale value is retained until the Task 4 track buffer lands.
             if proj is self._target_node:
                 self._target_position = noisy
 
