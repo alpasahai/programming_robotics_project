@@ -1,6 +1,10 @@
 """Atlas FSM — 7-state finite state machine governing turret behaviour."""
+
+import logging
 import math
 from dataclasses import dataclass
+
+_log = logging.getLogger("AtlasFSM")
 
 
 @dataclass
@@ -10,9 +14,10 @@ class SensorSuite:
     Injected into AtlasFSM at construction. Swap out in tests by substituting
     stub implementations for each field.
     """
-    search_radar:        object  # SearchRadar
-    fcr:                 object  # FireControlRadar
-    track_filter:        object  # TrackFilter
+
+    search_radar: object  # SearchRadar
+    fcr: object  # FireControlRadar
+    track_filter: object  # TrackFilter
     ballistic_predictor: object  # BallisticTrajectoryPredictor
 
 
@@ -22,10 +27,11 @@ class TurretHardware:
 
     Injected into AtlasFSM at construction.
     """
-    pan_motor:       object        # Webots RotationalMotor
-    tilt_motor:      object        # Webots RotationalMotor
-    turret_position: list[float]   # World-frame [x, y, z] of turret origin
-    timestep_ms:     int
+
+    pan_motor: object  # Webots RotationalMotor
+    tilt_motor: object  # Webots RotationalMotor
+    turret_position: list[float]  # World-frame [x, y, z] of turret origin
+    timestep_ms: int
 
 
 @dataclass
@@ -35,26 +41,29 @@ class FSMConfig:
     All fields have sensible defaults for normal operation. Override in tests
     to speed up state transitions (e.g. ACQUIRE_FRAMES=1) or adjust thresholds.
     """
-    max_range:           float = 10.0   # metres — target beyond this → RESET
-    ground_threshold:    float = 0.1    # metres world-Z — below this → landed
-    acquire_frames:      int   = 3      # consecutive detections to leave SEARCH
-    min_track_frames:    int   = 15     # TrackFilter frames before PREDICT
+
+    max_range: float = 10.0  # metres — target beyond this → RESET
+    ground_threshold: float = 0.1  # metres world-Z — below this → landed
+    acquire_frames: int = 3  # consecutive detections to leave SEARCH
+    min_track_frames: int = 15  # TrackFilter frames before PREDICT
     # lookahead_steps tuned for the ATLAS projectile (~1.6 m apex, ~1.2 s flight):
     # at a 32 ms timestep, 10 steps = 0.32 s, keeping the predicted intercept
     # airborne. A longer lookahead overshoots the projectile's landing and the
     # intercept falls below ground_threshold — see ADR-0001 and the regression
     # test test_default_lookahead_keeps_intercept_above_ground.
-    aim_error_threshold: float = 0.05   # radians — guards the AIMING→ENGAGING transition.
-                                         # _do_aim measures the angular offset between the desired
-                                         # intercept angles and the FSM's own last-commanded angles;
-                                         # since the intercept is static (fixed by PREDICT), this
-                                         # reaches zero within ~2 steps regardless of the threshold.
-                                         # A true mechanical-convergence check would require a Webots
-                                         # PositionSensor (not currently fitted). See _do_aim for the
-                                         # full rationale.
-    search_speed:        float = 0.02   # radians per step during pan sweep
-    search_pan_limit:    float = 1.4    # radians (~80°) sweep extent
-    lookahead_steps:     int   = 10     # timesteps ahead for intercept (see note above)
+    aim_error_threshold: float = (
+        0.05  # radians — guards the AIMING→ENGAGING transition.
+    )
+    # _do_aim measures the angular offset between the desired
+    # intercept angles and the FSM's own last-commanded angles;
+    # since the intercept is static (fixed by PREDICT), this
+    # reaches zero within ~2 steps regardless of the threshold.
+    # A true mechanical-convergence check would require a Webots
+    # PositionSensor (not currently fitted). See _do_aim for the
+    # full rationale.
+    search_speed: float = 0.02  # radians per step during pan sweep
+    search_pan_limit: float = 1.4  # radians (~80°) sweep extent
+    lookahead_steps: int = 10  # timesteps ahead for intercept (see note above)
 
 
 class AtlasFSM:
@@ -88,13 +97,13 @@ class AtlasFSM:
     See ADR-0003 for continuous fusion rationale.
     """
 
-    SEARCH   = "SEARCH"
-    ACQUIRE  = "ACQUIRE"
-    TRACK    = "TRACK"
-    PREDICT  = "PREDICT"
-    AIMING   = "AIMING"
+    SEARCH = "SEARCH"
+    ACQUIRE = "ACQUIRE"
+    TRACK = "TRACK"
+    PREDICT = "PREDICT"
+    AIMING = "AIMING"
     ENGAGING = "ENGAGING"
-    RESET    = "RESET"
+    RESET = "RESET"
 
     def __init__(
         self,
@@ -116,24 +125,24 @@ class AtlasFSM:
         self.state = self.SEARCH
 
         # SEARCH bookkeeping
-        self._detection_count = 0       # consecutive steps with at least one detection
-        self._pan_angle = 0.0           # current pan motor angle (radians)
-        self._pan_direction = 1         # +1 sweeping positive, -1 sweeping negative
+        self._detection_count = 0  # consecutive steps with at least one detection
+        self._pan_angle = 0.0  # current pan motor angle (radians)
+        self._pan_direction = 1  # +1 sweeping positive, -1 sweeping negative
 
         # ACQUIRE bookkeeping
-        self._target = None             # selected target (detection position vector)
+        self._target = None  # selected target (detection position vector)
         self._acquire_entry_done = False  # guard: entry actions fire exactly once
 
         # TRACK bookkeeping
-        self._track_frames = 0          # consecutive steps spent in TRACK
+        self._track_frames = 0  # consecutive steps spent in TRACK
 
         # PREDICT bookkeeping
-        self._intercept = None          # validated intercept point for AIMING
+        self._intercept = None  # validated intercept point for AIMING
 
         # AIMING / ENGAGING bookkeeping
-        self._commanded_pan = 0.0       # last pan angle sent to the pan motor (radians)
-        self._commanded_tilt = 0.0      # last tilt angle sent to the tilt motor (radians)
-        self.laser_active = False       # True while ENGAGING; read by the controller
+        self._commanded_pan = 0.0  # last pan angle sent to the pan motor (radians)
+        self._commanded_tilt = 0.0  # last tilt angle sent to the tilt motor (radians)
+        self.laser_active = False  # True while ENGAGING; read by the controller
 
     def step(self) -> None:
         """Advance FSM by one timestep.
@@ -430,7 +439,7 @@ class AtlasFSM:
         Args:
             new_state: One of the AtlasFSM state constants (SEARCH, ACQUIRE, …).
         """
-        print(f"[AtlasFSM] {self.state} → {new_state}")
+        _log.info("%s -> %s", self.state, new_state)
         self.state = new_state
 
         # Reset bookkeeping for the state we are ENTERING

@@ -1,0 +1,27 @@
+[INFO - Controller] ==============================================================================
+[INFO - Controller] ATLAS telemetry legend
+[INFO - Controller]   All positions below are TURRET-RELATIVE metres [dx, dy, dz] — the
+[INFO - Controller]   offset from the turret, which sits at [0,0,0] in this frame.
+[INFO - Controller]   filtered_pos  : Kalman filter's estimate of where the projectile is NOW
+[INFO - Controller]   filtered_vel  : Kalman filter's estimate of projectile velocity (m/s)
+[INFO - Controller]   intercept     : predicted aim point — where the projectile is expected
+[INFO - Controller]                   to be 10 timesteps ahead (the point PREDICT validates)
+[INFO - Controller]   true_pos      : actual projectile position, un-noised ground truth
+[INFO - Controller]                   (shown beside filtered_pos for comparison; FSM never sees it)
+[INFO - Controller]   filter_error  : distance between filtered_pos and true_pos — how
+[INFO - Controller]                   accurate the Kalman estimate is RIGHT NOW (lower = better)
+[INFO - Controller]   pred_error    : distance between true_pos NOW and the intercept that was
+[INFO - Controller]                   predicted 10 steps ago FOR now — how accurate the
+[INFO - Controller]                   prediction was (spikes at projectile relaunch — expected)
+[INFO - Controller]   range_check   : intercept's distance from turret vs config.max_range
+[INFO - Controller]   ground_check  : intercept's height (z) vs config.ground_threshold
+[INFO - Controller] ------------------------------------------------------------------------------
+[INFO - Controller] turret_position (WORLD frame, fixed) = [-0.82, -0.04, 0.06]
+[INFO - Controller] timestep = 32 ms   lookahead_steps = 10   max_range = 10.0 m   ground_threshold = 0.10 m
+[INFO - Controller] ==============================================================================
+[DEBUG - Controller] FSM=SEARCH   step=1   t=0.03s
+    filtered_pos = [0.83, -2.35, 0.2]     true_pos = [0.82, -2.36, 0.17]    filter_error = 0.030 m
+    filtered_vel = [0.03, -0.08, -0.31]
+    intercept    = [0.84, -2.38, -0.4]    pred_error = n/a (warming up)
+    range_check  : 2.55 m vs max 10.0 m   -> IN-RANGE
+    ground_check : intercept height -0.40 m vs min 0.10 m   -> BELOW-GROUND
