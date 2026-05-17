@@ -43,8 +43,13 @@ PROTO SearchRadar [
     ]
     name IS name
     model "search_radar"
-    boundingObject Box {
-      size 0.4 0.4 2.15
+    boundingObject Pose {
+      translation 0 0 1.075
+      children [
+        Box {
+          size 0.4 0.4 2.15
+        }
+      ]
     }
     controller "<none>"
   }
