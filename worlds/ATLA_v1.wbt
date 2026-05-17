@@ -10,8 +10,8 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 WorldInfo {
 }
 Viewpoint {
-  orientation 0.1731787448843098 0.03261079363612663 -0.9843503738297239 2.7750162765835182
-  position 9.951712321629044 3.690609392364916 4.152775103379987
+  orientation 0.173179 0.0326108 -0.98435 2.77502
+  position 17.5 6.5 6.5
 }
 Floor {
   appearance Parquetry {
@@ -166,6 +166,26 @@ Robot {
                     ]
                     creaseAngle 1.5
                   }
+                }
+                Transform {
+                  translation 0 0 4
+                  rotation 1 0 0 -1.5708
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor 1 0 0
+                        emissiveColor 1 0 0
+                        roughness 1
+                        metalness 0
+                        transparency 0.3
+                      }
+                      geometry Cylinder {
+                        height 8
+                        radius 0.008
+                        subdivision 6
+                      }
+                    }
+                  ]
                 }
               ]
               name "TILT_PLATFORM"

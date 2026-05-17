@@ -1,0 +1,12 @@
+[project]
+name = "programming-robotics-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pytest>=9.0.3",
+    "numpy>=1.26",
+    "filterpy>=1.4",
+    "pdoc>=16.0.0",
+]
