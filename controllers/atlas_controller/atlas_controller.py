@@ -1,99 +1,141 @@
-"""atlas_controller controller."""
+"""ATLAS turret Webots supervisor controller.
 
-#Importing libraries:
-import math
+Thin glue layer: constructs all components, wires them together, then runs
+the per-timestep loop. No logic lives here — all decision-making is inside
+the tested modules (FireControlRadar, SearchRadar, TrackFilter,
+BallisticTrajectoryPredictor, AtlasFSM). Projectile launch/reset is the only
+controller-level stateful behaviour (it is Webots-specific and untestable
+outside the runtime).
+
+Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
+  1. Sense   — search_radar.update(), fcr.update()
+  2. Predict — track_filter.predict()
+  3. Fuse    — track_filter.update_fcr() and/or update_search() when available
+  4. Decide  — fsm.step()
+  5. Manage  — projectile reset/relaunch independent of FSM
+"""
 
 from controller import Supervisor
 
-#Implementing the multi-file system:
-from radar_system import RadarSystem
+from fire_control_radar import FireControlRadar
+from search_radar import SearchRadar
+from track_filter import TrackFilter
+from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
 from projectile_system import ProjectileSystem
+from fsm import AtlasFSM, FSMConfig, SensorSuite, TurretHardware
 
-#Create the Supervisor instance
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
 robot = Supervisor()
-#Get the time step of the current world.
 timestep = int(robot.getBasicTimeStep())
 
-#----------------------COMPONENT CONNECTIONS----------------------
+# --- Devices ---
 pan = robot.getDevice("PAN_MOTOR")
 tilt = robot.getDevice("TILT_MOTOR")
+
+# --- Scene nodes ---
 projectile = robot.getFromDef("PROJECTILE")
-#----------------------VARIABLES-----------------------------------
+turret_position = robot.getSelf().getPosition()
 
-time = 0
-#flying objects have 6 coordinates [x, y, z, rx, ry, rx]
-#projectile.setVelocity([0, 5, 5, 0, 0, 0]) #z controls the height
+# --- Sensors ---
+# Tuning parameters: FCR is narrow-beam / precise; SearchRadar is wide-beam / coarse.
+fcr = FireControlRadar(
+    projectile,
+    turret_position,
+    noise_std=0.02,          # low noise — FCR is precise (metres std)
+)
+search_radar = SearchRadar(
+    [projectile],            # list of all projectile nodes in the scene
+    turret_position,
+    noise_std=0.2,           # high noise — SearchRadar is coarse (metres std)
+    timestep_ms=timestep,
+)
 
-radar = RadarSystem(projectile)
+# --- State estimator ---
+# Tuning parameters chosen to match sensor noise characteristics.
+# R_fcr=0.001 (trusts FCR heavily), R_search=0.1 (down-weights wide-beam),
+# Q=0.01 (small process noise for near-ballistic motion).
+track_filter = TrackFilter(
+    timestep_ms=timestep,
+    R_fcr=0.001,             # FCR measurement noise variance (m²) — low, trusted
+    R_search=0.1,            # SearchRadar noise variance (m²) — high, coarse
+    Q=0.01,                  # process noise scale — small for near-ballistic motion
+)
+
+# --- Ballistic predictor ---
+ballistic_predictor = BallisticTrajectoryPredictor(track_filter, timestep_ms=timestep)
+
+# --- FSM wiring ---
+sensors = SensorSuite(
+    search_radar=search_radar,
+    fcr=fcr,
+    track_filter=track_filter,
+    ballistic_predictor=ballistic_predictor,
+)
+hardware = TurretHardware(
+    pan_motor=pan,
+    tilt_motor=tilt,
+    turret_position=turret_position,
+    timestep_ms=timestep,
+)
+fsm = AtlasFSM(sensors, hardware)  # uses default FSMConfig
+
+# --- Projectile system ---
 projectile_system = ProjectileSystem(projectile)
 
-#Ensuring that it intially launches:
+# Projectile reset state (independent of FSM)
 projectile_launched = False
-waiting_for_launch = False #THIS IS TO HELP IT ADD A GAP like a waiting thing
+waiting_for_launch = False
 reset_time = 0
-launch_delay = 2000 #2 secs
+launch_delay = 2000  # ms — 2 second gap between shots
 
 projectile_system.launch_projectile()
 projectile_launched = True
 
-#turret variables to follow the projectile:
-turret_position = robot.getSelf().getPosition()
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
 
-#----------------------MAIN LOOP ---------------------------------
 while robot.step(timestep) != -1:
-    #TURRET SYSTEM (TESTING) - trying to make it rotate back and forward
-    #pan_angle = math.sin(time) * 1.57
-    #tilt_angle = math.sin(time) * 0.5
-    
-    #pan.setPosition(pan_angle)
-    #tilt.setPosition(tilt_angle)
-    #time += 0.02
-    
-    #Confirmation of the testing
-    #print("Robot PAN MOTOR Rotation: ", pan_angle)
-    #print("Robot TILT MOTOR Rotation: ", tilt_angle)
-  #-----------------------------PROJECTILE SYSTEM------------------------- 
-    #Getting the projectile's positioning and velocity
+
+    # 1. Sense — read both sensors
+    search_radar.update()
+    fcr.update()
+
+    # 2. Predict — propagate Kalman state forward one timestep
+    track_filter.predict()
+
+    # 3. Fuse — update filter with whichever measurements are available.
+    #    Both are None before their respective sensors have locked a target.
+    fcr_pos = fcr.get_target_position()
+    if fcr_pos is not None:
+        track_filter.update_fcr(fcr_pos)
+
+    search_pos = search_radar.get_target_position()
+    if search_pos is not None:
+        track_filter.update_search(search_pos)
+
+    # 4. Decide — advance FSM one step
+    fsm.step()
+    print(f"[FSM] {fsm.state}")
+
+    # 5. Manage projectile — detect ground hit and relaunch after delay.
+    #    This is independent of FSM state: the turret cycle and the projectile
+    #    trajectory are decoupled so the FSM can run through RESET→SEARCH while
+    #    waiting for the next shot.
     projectile_position = projectile.getPosition()
     projectile_velocity = projectile.getVelocity()
-    
-    #Getting the projectile launching and resetting:
-    current_time = robot.getTime() * 1000 #converting to ms
-    #Detecting when the projectile hits the ground:
+    current_time = robot.getTime() * 1000  # convert to ms
+
     if projectile_position[2] < 0.05 and projectile_velocity[2] < 0 and projectile_launched:
-    #if projectile_position[1] < 0.05 and abs(projectile_velocity[2] < 0) and projectile_launched:        
         projectile_launched = False
         waiting_for_launch = True
         reset_time = current_time
         projectile_system.reset_projectile()
-        
-    #Relaunching after the delay
+
     if waiting_for_launch and (current_time - reset_time > launch_delay):
         projectile_system.launch_projectile()
-        
         projectile_launched = True
         waiting_for_launch = False
-    
-    #Working through the radar system:
-    target_position = radar.get_target_position()
-    print("Projectile Position: ", target_position)
-  #-----------------------------TURRET SYSTEM-------------------------   
-    dx = target_position[0] - turret_position[0]
-    dy = target_position[1] - turret_position[1]
-    dz = target_position[2] - turret_position[2]
-    
-    #Calculating horizontal distance of the projectile from turret POV
-    horizontal_distance = math.sqrt(dx**2 + dy**2)
-
-    #Calculating pan angle and tilt angle:
-    pan_angle = math.atan2(dy, dx)
-    tilt_angle = math.atan2(horizontal_distance, dz)
-    
-    #Setting the motors so that pan adn tilt follows the porjectile:
-    pan.setPosition(pan_angle)
-    tilt.setPosition(tilt_angle)
-    print("Robot PAN MOTOR Rotation: ", pan_angle)
-    print("Robot TILT MOTOR Rotation: ", tilt_angle)
-    
-    pass
-    
