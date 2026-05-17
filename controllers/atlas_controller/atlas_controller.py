@@ -22,7 +22,13 @@ from search_radar import SearchRadar
 from track_filter import TrackFilter
 from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
 from projectile_system import ProjectileSystem
-from fsm import AtlasFSM, FSMConfig, SensorSuite, TurretHardware
+from fsm import AtlasFSM, SensorSuite, TurretHardware
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+GROUND_HIT_THRESHOLD_M = 0.05  # metres — projectile below this height counts as landed
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -37,7 +43,7 @@ tilt = robot.getDevice("TILT_MOTOR")
 
 # --- Scene nodes ---
 projectile = robot.getFromDef("PROJECTILE")
-turret_position = robot.getSelf().getPosition()
+turret_position = robot.getSelf().getPosition()  # static snapshot — turret base never moves
 
 # --- Sensors ---
 # Tuning parameters: FCR is narrow-beam / precise; SearchRadar is wide-beam / coarse.
@@ -88,7 +94,7 @@ projectile_system = ProjectileSystem(projectile)
 # Projectile reset state (independent of FSM)
 projectile_launched = False
 waiting_for_launch = False
-reset_time = 0
+reset_time = 0  # ms
 launch_delay = 2000  # ms — 2 second gap between shots
 
 projectile_system.launch_projectile()
@@ -119,7 +125,6 @@ while robot.step(timestep) != -1:
 
     # 4. Decide — advance FSM one step
     fsm.step()
-    print(f"[FSM] {fsm.state}")
 
     # 5. Manage projectile — detect ground hit and relaunch after delay.
     #    This is independent of FSM state: the turret cycle and the projectile
@@ -129,7 +134,7 @@ while robot.step(timestep) != -1:
     projectile_velocity = projectile.getVelocity()
     current_time = robot.getTime() * 1000  # convert to ms
 
-    if projectile_position[2] < 0.05 and projectile_velocity[2] < 0 and projectile_launched:
+    if projectile_position[2] < GROUND_HIT_THRESHOLD_M and projectile_velocity[2] < 0 and projectile_launched:
         projectile_launched = False
         waiting_for_launch = True
         reset_time = current_time
