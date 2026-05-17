@@ -11,7 +11,7 @@ PROTO SearchRadar [
     translation IS translation
     name IS name
     model "search_radar"
-    controller "<none>"
+    controller "search_radar_controller"
 
     children [
       HingeJoint {

@@ -49,7 +49,7 @@ logging.basicConfig(
     level=TELEMETRY_LEVEL,
     format="[%(levelname)s - %(name)s] %(message)s",
     handlers=[
-        logging.StreamHandler(),                                # Webots console
+        logging.StreamHandler(),  # Webots console
         logging.FileHandler("atlas_telemetry.log", mode="w", encoding="utf-8"),
     ],
 )
@@ -73,32 +73,41 @@ timestep = int(robot.getBasicTimeStep())
 # --- Devices ---
 pan = robot.getDevice("PAN_MOTOR")
 tilt = robot.getDevice("TILT_MOTOR")
+search_radar_node = robot.getFromDef("SEARCH_RADAR")
+if search_radar_node is None:
+    raise RuntimeError("Could not find DEF SEARCH_RADAR in the world file.")
+
+radar_position = search_radar_node.getPosition()
 
 # --- Scene nodes ---
 projectile = robot.getFromDef("PROJECTILE")
-search_radar_node = robot.getFromDef("SEARCH_RADAR")
+if projectile is None:
+    raise RuntimeError("Could not find DEF PROJECTILE in the world file.")
+
 radar_position = search_radar_node.getPosition()
-turret_position = robot.getSelf().getPosition()  # static snapshot — turret base never moves
+turret_position = (
+    robot.getSelf().getPosition()
+)  # static snapshot — turret base never moves
 
 # --- Sensors ---
 # Tuning parameters: FCR is narrow-beam / precise; SearchRadar is wide-beam / coarse.
 fcr = FireControlRadar(
     projectile,
     turret_position,
-    noise_std=0.02,          # low noise — FCR is precise (metres std)
+    noise_std=0.02,  # low noise — FCR is precise (metres std)
 )
 # FOV/scan values below are starting points — confirm and tune in Webots.
 search_radar = SearchRadar(
-    [projectile],            # list of all projectile nodes in the scene
+    [projectile],  # list of all projectile nodes in the scene
     turret_position,
     radar_position,
-    noise_std=0.2,           # high noise — SearchRadar is coarse (metres std)
+    noise_std=0.2,  # high noise — SearchRadar is coarse (metres std)
     timestep_ms=timestep,
-    max_range=20.0,          # metres — starting value, tuned in Webots
+    max_range=20.0,  # metres — starting value, tuned in Webots
     vertical_fov=math.pi / 2,  # 90deg full vertical FOV — starting value
-    beam_width=0.35,         # rad — rotating beam width, starting value
-    scan_rate=0.15,          # rad per step — beam sweep speed, starting value
-    track_timeout=20,        # steps a track persists across beam sweeps
+    beam_width=0.35,  # rad — rotating beam width, starting value
+    scan_rate=0.15,  # rad per step — beam sweep speed, starting value
+    track_timeout=20,  # steps a track persists across beam sweeps
 )
 
 # --- State estimator ---
@@ -107,9 +116,9 @@ search_radar = SearchRadar(
 # Q=0.01 (small process noise for near-ballistic motion).
 track_filter = TrackFilter(
     timestep_ms=timestep,
-    R_fcr=0.001,             # FCR measurement noise variance (m²) — low, trusted
-    R_search=0.1,            # SearchRadar noise variance (m²) — high, coarse
-    Q=0.01,                  # process noise scale — small for near-ballistic motion
+    R_fcr=0.001,  # FCR measurement noise variance (m²) — low, trusted
+    R_search=0.1,  # SearchRadar noise variance (m²) — high, coarse
+    Q=0.01,  # process noise scale — small for near-ballistic motion
 )
 
 # --- Ballistic predictor ---
@@ -149,25 +158,36 @@ log.info("  offset from the turret, which sits at [0,0,0] in this frame.")
 log.info("  filtered_pos  : Kalman filter's estimate of where the projectile is NOW")
 log.info("  filtered_vel  : Kalman filter's estimate of projectile velocity (m/s)")
 log.info("  intercept     : predicted aim point — where the projectile is expected")
-log.info("                  to be %d timesteps ahead (the point PREDICT validates)",
-         fsm.config.lookahead_steps)
+log.info(
+    "                  to be %d timesteps ahead (the point PREDICT validates)",
+    fsm.config.lookahead_steps,
+)
 log.info("  true_pos      : actual projectile position, un-noised ground truth")
-log.info("                  (shown beside filtered_pos for comparison; FSM never sees it)")
+log.info(
+    "                  (shown beside filtered_pos for comparison; FSM never sees it)"
+)
 log.info("  filter_error  : distance between filtered_pos and true_pos — how")
 log.info("                  accurate the Kalman estimate is RIGHT NOW (lower = better)")
 log.info("  pred_error    : distance between true_pos NOW and the intercept that was")
-log.info("                  predicted %d steps ago FOR now — how accurate the",
-         fsm.config.lookahead_steps)
+log.info(
+    "                  predicted %d steps ago FOR now — how accurate the",
+    fsm.config.lookahead_steps,
+)
 log.info("                  prediction was (spikes at projectile relaunch — expected)")
 log.info("  range_check   : intercept's distance from turret vs config.max_range")
 log.info("  ground_check  : intercept's height (z) vs config.ground_threshold")
 log.info("-" * 78)
-log.info("turret_position (WORLD frame, fixed) = %s",
-         [round(v, 3) for v in turret_position])
-log.info("timestep = %d ms   lookahead_steps = %d   max_range = %.1f m   "
-         "ground_threshold = %.2f m",
-         timestep, fsm.config.lookahead_steps,
-         fsm.config.max_range, fsm.config.ground_threshold)
+log.info(
+    "turret_position (WORLD frame, fixed) = %s", [round(v, 3) for v in turret_position]
+)
+log.info(
+    "timestep = %d ms   lookahead_steps = %d   max_range = %.1f m   "
+    "ground_threshold = %.2f m",
+    timestep,
+    fsm.config.lookahead_steps,
+    fsm.config.max_range,
+    fsm.config.ground_threshold,
+)
 log.info("=" * 78)
 
 # Past intercepts, kept so each step can compare the prediction made
@@ -211,15 +231,15 @@ while robot.step(timestep) != -1:
         log.debug(
             "FSM=%s   step=%d   t=%.2fs\n"
             "    (track filter not initialised — no estimate this step)",
-            fsm.state, step_count, robot.getTime(),
+            fsm.state,
+            step_count,
+            robot.getTime(),
         )
     else:
         fpos = track_filter.get_position()
         fvel = track_filter.get_velocity()
         icept = ballistic_predictor.get_intercept(fsm.config.lookahead_steps)
-        true_rel = [
-            projectile.getPosition()[i] - turret_position[i] for i in range(3)
-        ]
+        true_rel = [projectile.getPosition()[i] - turret_position[i] for i in range(3)]
 
         # Filter accuracy now: filtered estimate vs ground truth.
         filter_error = _distance(fpos, true_rel)
@@ -247,13 +267,20 @@ while robot.step(timestep) != -1:
             "    intercept    = %-22s pred_error = %s\n"
             "    range_check  : %.2f m vs max %.1f m   -> %s\n"
             "    ground_check : intercept height %.2f m vs min %.2f m   -> %s",
-            fsm.state, step_count, robot.getTime(),
-            str(fp), str(tp), filter_error,
+            fsm.state,
+            step_count,
+            robot.getTime(),
+            str(fp),
+            str(tp),
+            filter_error,
             str(fv),
-            str(ic), pred_error,
-            dist, fsm.config.max_range,
+            str(ic),
+            pred_error,
+            dist,
+            fsm.config.max_range,
             "IN-RANGE" if in_range else "OUT-OF-RANGE",
-            icept[2], fsm.config.ground_threshold,
+            icept[2],
+            fsm.config.ground_threshold,
             "ABOVE-GROUND" if above_ground else "BELOW-GROUND",
         )
 
@@ -265,7 +292,11 @@ while robot.step(timestep) != -1:
     projectile_velocity = projectile.getVelocity()
     current_time = robot.getTime() * 1000  # convert to ms
 
-    if projectile_position[2] < GROUND_HIT_THRESHOLD_M and projectile_velocity[2] < 0 and projectile_launched:
+    if (
+        projectile_position[2] < GROUND_HIT_THRESHOLD_M
+        and projectile_velocity[2] < 0
+        and projectile_launched
+    ):
         projectile_launched = False
         waiting_for_launch = True
         reset_time = current_time
