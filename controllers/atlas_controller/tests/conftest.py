@@ -1,11 +1,17 @@
 """pytest configuration for atlas_controller tests.
 
-Inserts the tests/ directory onto sys.path so that bare
-``from stubs import ...`` imports resolve regardless of pytest's rootdir.
+Inserts both the tests/ directory and the atlas_controller/ directory onto
+sys.path so that test modules can import stubs (``from stubs import ...``)
+and production modules (``from fire_control_radar import ...``) without
+maintaining their own path boilerplate.
 """
 import sys
 import os
 
-# Make the tests/ directory importable as a plain namespace
-# (stubs.py lives here alongside the test modules).
-sys.path.insert(0, os.path.dirname(__file__))
+_tests_dir = os.path.dirname(__file__)
+_atlas_controller_dir = os.path.dirname(_tests_dir)
+
+# Make stubs.py importable: ``from stubs import StubProjectile``
+sys.path.insert(0, _tests_dir)
+# Make production modules importable: ``from fire_control_radar import ...``
+sys.path.insert(0, _atlas_controller_dir)

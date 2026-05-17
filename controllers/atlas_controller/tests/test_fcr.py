@@ -1,9 +1,4 @@
 """Tests for FireControlRadar — ATLAS's narrow-beam on-board sensor."""
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from stubs import StubProjectile
 from fire_control_radar import FireControlRadar
 
@@ -19,7 +14,10 @@ def test_get_target_position_returns_none_before_first_update():
 
 
 def test_update_subtracts_turret_position():
-    """update() converts world-frame position to turret-relative [dx, dy, dz]."""
+    """update() converts world-frame position to turret-relative [dx, dy, dz].
+
+    Covers both the subtraction logic and the noiseless (noise_std=0.0) path.
+    """
     world_pos = [4.0, 5.0, 3.0]
     proj = StubProjectile([world_pos])
     fcr = FireControlRadar(proj, TURRET_POS, noise_std=0.0)
@@ -31,20 +29,6 @@ def test_update_subtracts_turret_position():
         world_pos[2] - TURRET_POS[2],
     ]
     assert result == expected
-
-
-def test_update_with_noise_std_zero_returns_exact_values():
-    """With noise_std=0.0, update() must return exactly the noiseless relative position."""
-    world_pos = [10.0, 20.0, 5.0]
-    proj = StubProjectile([world_pos])
-    fcr = FireControlRadar(proj, TURRET_POS, noise_std=0.0)
-    fcr.update()
-    result = fcr.get_target_position()
-    assert result == [
-        world_pos[0] - TURRET_POS[0],
-        world_pos[1] - TURRET_POS[1],
-        world_pos[2] - TURRET_POS[2],
-    ]
 
 
 def test_set_target_replaces_tracked_node():
@@ -75,9 +59,10 @@ def test_set_target_clears_last_stored_position():
 def test_update_with_nonzero_noise_perturbs_reading():
     """With noise_std > 0, readings must differ from the noiseless value on at least one axis.
 
-    Uses a fixed random seed so the test is deterministic. Runs many samples
-    and asserts that the mean absolute deviation is within expected Gaussian
-    bounds (1-sigma = noise_std), confirming noise is actually applied.
+    Uses a seeded ``random.Random`` injected via the ``rng`` parameter so the
+    test is fully deterministic without monkey-patching. Runs many samples and
+    asserts the mean absolute deviation is within expected Gaussian bounds
+    (1-sigma = noise_std), confirming noise is actually applied.
     """
     import random
 
@@ -86,20 +71,15 @@ def test_update_with_nonzero_noise_perturbs_reading():
     N = 1000
     deviations = []
 
-    rng = random.Random(42)
-
-    # Patch random.gauss to use a seeded instance so the test is reproducible
-    original_gauss = random.gauss
-    random.gauss = rng.gauss
-    try:
-        for _ in range(N):
-            proj = StubProjectile([world_pos])
-            fcr = FireControlRadar(proj, [0.0, 0.0, 0.0], noise_std=noise_std)
-            fcr.update()
-            pos = fcr.get_target_position()
-            deviations.extend(pos)
-    finally:
-        random.gauss = original_gauss
+    # One seeded RNG shared across all update() calls so each draw is
+    # independent — re-seeding inside the loop would repeat the same draw.
+    seeded_rng = random.Random(42)
+    proj = StubProjectile([world_pos])
+    fcr = FireControlRadar(proj, [0.0, 0.0, 0.0], noise_std=noise_std, rng=seeded_rng)
+    for _ in range(N):
+        fcr.update()
+        pos = fcr.get_target_position()
+        deviations.extend(pos)
 
     mean_abs = sum(abs(d) for d in deviations) / len(deviations)
     # For N(0, sigma), E[|X|] = sigma * sqrt(2/pi) ≈ 0.798 * sigma

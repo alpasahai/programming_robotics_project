@@ -1,6 +1,4 @@
 """Fire-Control Radar — ATLAS's own narrow-beam on-board sensor."""
-from __future__ import annotations
-
 import random
 
 
@@ -19,6 +17,7 @@ class FireControlRadar:
         projectile,
         turret_position: list[float],
         noise_std: float = 0.0,
+        rng: random.Random | None = None,
     ) -> None:
         """Initialise the radar, binding it to a target node and turret origin.
 
@@ -31,10 +30,16 @@ class FireControlRadar:
             noise_std:       Standard deviation (metres) of zero-mean Gaussian
                              noise added independently to each axis on every
                              ``update()`` call. Default 0.0 (noiseless).
+            rng:             Optional ``random.Random`` instance used for noise
+                             sampling. When ``None`` (default), a fresh
+                             ``random.Random()`` instance is created. Pass a
+                             seeded instance (e.g. ``random.Random(42)``) to
+                             make noise deterministic in tests.
         """
         self._projectile = projectile
         self._turret_position = list(turret_position)
         self._noise_std = noise_std
+        self._rng = rng if rng is not None else random.Random()
         self._last_position: list[float] | None = None
 
     def update(self) -> None:
@@ -47,9 +52,9 @@ class FireControlRadar:
         """
         world = self._projectile.getPosition()
         relative = [world[i] - self._turret_position[i] for i in range(3)]
-        if self._noise_std != 0.0:
+        if self._noise_std:
             relative = [
-                relative[i] + random.gauss(0.0, self._noise_std)
+                relative[i] + self._rng.gauss(0.0, self._noise_std)
                 for i in range(3)
             ]
         self._last_position = relative
