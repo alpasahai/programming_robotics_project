@@ -16,6 +16,7 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
 """
 
 import logging
+import math
 from collections import deque
 
 from controller import Supervisor
@@ -75,6 +76,8 @@ tilt = robot.getDevice("TILT_MOTOR")
 
 # --- Scene nodes ---
 projectile = robot.getFromDef("PROJECTILE")
+search_radar_node = robot.getFromDef("SEARCH_RADAR")
+radar_position = search_radar_node.getPosition()
 turret_position = robot.getSelf().getPosition()  # static snapshot — turret base never moves
 
 # --- Sensors ---
@@ -84,11 +87,18 @@ fcr = FireControlRadar(
     turret_position,
     noise_std=0.02,          # low noise — FCR is precise (metres std)
 )
+# FOV/scan values below are starting points — confirm and tune in Webots.
 search_radar = SearchRadar(
     [projectile],            # list of all projectile nodes in the scene
     turret_position,
+    radar_position,
     noise_std=0.2,           # high noise — SearchRadar is coarse (metres std)
     timestep_ms=timestep,
+    max_range=20.0,          # metres — starting value, tuned in Webots
+    vertical_fov=math.pi / 2,  # 90deg full vertical FOV — starting value
+    beam_width=0.35,         # rad — rotating beam width, starting value
+    scan_rate=0.15,          # rad per step — beam sweep speed, starting value
+    track_timeout=20,        # steps a track persists across beam sweeps
 )
 
 # --- State estimator ---
