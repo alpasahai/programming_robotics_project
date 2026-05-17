@@ -130,33 +130,31 @@ class SearchRadar:
         # age=0 means detected this cycle; incremented each update() without detection;
         # dropped when age > track_timeout.
         self._track_buffer: dict[int, tuple[Detection, int]] = {}
-        self._target_node = None
         self._target_id: int | None = None
 
     def update(self) -> None:
         """Read all projectile positions, gate by range/elevation/azimuth, add noise.
 
-        For each projectile in ``self._projectiles`` (enumerated so that the
-        index serves as track_id per ADR-0006):
-        1. Advances the beam azimuth by ``scan_rate`` (at the start of the update).
-        2. Ages every existing track buffer entry by +1.
-        3. For each projectile that passes all three gates (range, elevation,
-           azimuth), writes/overwrites its buffer entry at age 0 with a fresh
-           noisy ``Detection``.
-        4. Drops any buffer entry whose age exceeds ``track_timeout``.
+        Each call performs four steps in order:
 
-        Gate conditions (all three must pass):
-          - Euclidean range from radar_position ≤ max_range
-          - |elevation| ≤ vertical_fov / 2
-          - |angle_diff(proj_azimuth, beam_azimuth)| ≤ beam_width / 2
-
-        Position noise: subtracts turret_position (not radar_position) and adds
-        independent Gaussian noise (std=noise_std) on each axis.
+        1. Advance the beam azimuth by ``scan_rate`` (wraps at 2π).
+        2. Age every existing track buffer entry by +1.
+        3. For each projectile in ``self._projectiles`` (index = track_id,
+           per ADR-0006): compute azimuth, elevation, and range relative to
+           ``radar_position``; reject if any gate fails (range > max_range,
+           |elevation| > vertical_fov/2, or beam angular error > beam_width/2);
+           for accepted projectiles, subtract ``turret_position``, add
+           independent Gaussian noise (std=``noise_std``) on each axis, and
+           overwrite the buffer entry for that track_id at age 0 with a fresh
+           ``Detection``.
+        4. Drop any buffer entry whose age exceeds ``track_timeout``.
 
         Track buffer persistence: a detected projectile refreshes its entry to
-        age 0 each update it is directly detected. Between beam passes, the entry
-        ages by 1 per update and persists until age > track_timeout. This means
-        with track_timeout=N a track survives N updates with no re-detection.
+        age 0 each update it is directly detected. Between beam passes the entry
+        ages by 1 per update and persists until ``age > track_timeout``; with
+        ``track_timeout=N`` the track survives N updates with no re-detection.
+        The buffered ``Detection`` holds the position measured at the last
+        detection — it is NOT updated while the beam is away.
         """
         # (a) Advance the beam azimuth before gating.
         self._beam_azimuth = (self._beam_azimuth + self._scan_rate) % (2 * math.pi)
@@ -241,10 +239,10 @@ class SearchRadar:
     def set_target(self, track_id: int) -> None:
         """Lock onto a specific projectile as the tracked target.
 
-        Resolves the integer ``track_id`` to the corresponding Webots node
-        internally, keeping the node handle inside the sensor membrane
-        (ADR-0006). The FSM holds only the integer ``track_id`` — it never
-        receives or stores a node handle.
+        Validates ``track_id`` against the projectile list, keeping the
+        ``track_id → index`` identity inside the sensor membrane (ADR-0006).
+        The FSM holds only the integer ``track_id`` — it never receives or
+        stores a node handle.
 
         Called at ACQUIRE (SearchRadar only — FCR is single-target, cued at
         construction and not re-targeted by the FSM; see ADR-0006). After
@@ -263,7 +261,10 @@ class SearchRadar:
                         is intentional — callers must not pass a stale or
                         out-of-bounds track_id.
         """
-        self._target_node = self._projectiles[track_id]
+        # Bounds-check: raises IndexError for an invalid track_id.
+        # The node handle is not stored — track_id is sufficient for all
+        # buffer lookups after the Task 4 rewrite.
+        _ = self._projectiles[track_id]
         self._target_id = track_id
         # Clear any stale buffer entry for the newly locked target so that
         # get_target_position() returns None until the next update() detects it.

@@ -808,3 +808,52 @@ def test_get_target_position_returns_none_after_track_drops():
     assert radar.get_target_position() is None, (
         "After track drops from buffer, get_target_position() must return None"
     )
+
+
+def test_buffered_position_is_frozen_while_beam_is_away():
+    """The buffer holds the position measured at the last detection, not the projectile's
+    current position.
+
+    A moving target is detected once (beam aligned), then the beam sweeps away.
+    The projectile continues to move to new positions in subsequent calls to
+    getPosition(), but get_detections() and get_target_position() must keep
+    returning the position that was measured at the moment of detection — the
+    buffer must NOT re-read the node during the dark window.
+    """
+    track_timeout = 3
+    detection_pos = [0.0, 100.0, 0.0]    # position when beam is on target
+    # Subsequent positions the projectile moves to while beam is away
+    moved_positions = [
+        [0.0, 110.0, 5.0],
+        [0.0, 120.0, 10.0],
+        [0.0, 130.0, 15.0],
+    ]
+    all_positions = [detection_pos] + moved_positions + [[0.0, 140.0, 20.0]]  # extra safety
+    proj = StubProjectile(all_positions)
+
+    radar = _make_narrow_beam_radar([proj], track_timeout=track_timeout, noise_std=0.0)
+    radar.set_target(0)
+
+    # Detect once with beam on target
+    radar._beam_azimuth = 0.0
+    radar.update()
+    first_detection = radar.get_target_position()
+    assert first_detection == detection_pos, "Precondition: first detection matches node position"
+
+    # Sweep beam away — projectile moves each cycle but buffer must stay frozen
+    radar._beam_azimuth = math.radians(90)
+    for i, moved_pos in enumerate(moved_positions):
+        radar.update()
+        buffered_detection = radar.get_detections()
+        buffered_target = radar.get_target_position()
+
+        # Buffer must still hold the original detection position
+        assert len(buffered_detection) == 1, f"Track must still be live on dark cycle {i + 1}"
+        assert buffered_detection[0].position == detection_pos, (
+            f"get_detections()[0].position must be frozen at {detection_pos}, "
+            f"not updated to {moved_pos} (dark cycle {i + 1})"
+        )
+        assert buffered_target == detection_pos, (
+            f"get_target_position() must be frozen at {detection_pos}, "
+            f"not updated to {moved_pos} (dark cycle {i + 1})"
+        )
