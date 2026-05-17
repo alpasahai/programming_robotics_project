@@ -88,7 +88,7 @@ class AtlasFSM:
         self,
         sensors: SensorSuite,
         hardware: TurretHardware,
-        config: FSMConfig = None,
+        config: FSMConfig | None = None,
     ) -> None:
         """Initialise the FSM in SEARCH state with all per-state bookkeeping.
 
@@ -174,7 +174,6 @@ class AtlasFSM:
         if self._detection_count >= self.config.acquire_frames:
             self._target = detections[0]
             self._transition(self.ACQUIRE)
-            self._do_acquire()
 
     def _do_acquire(self) -> None:
         """Execute one timestep of ACQUIRE state logic.

@@ -146,32 +146,35 @@ def test_search_no_detections_stays_in_search():
 def test_search_consecutive_detections_transition_out_of_search():
     """After acquire_frames consecutive detection steps, FSM must have left SEARCH.
 
-    Uses initialised=False so ACQUIRE entry actions fire but the FSM stays in
-    ACQUIRE (rather than immediately falling through to TRACK), making it easy
-    to assert state == ACQUIRE.
+    Uses initialised=False so the FSM stays in ACQUIRE (rather than immediately
+    falling through to TRACK on the next step), making it easy to assert
+    state == ACQUIRE.
+
+    Step sequence (acquire_frames=3):
+      Steps 1-3: SEARCH handler counts 3 consecutive detections → transitions
+                 to ACQUIRE on step 3 (no ACQUIRE handler runs yet).
+      Step 4:    ACQUIRE handler runs for the first time; filter not initialised
+                 → remains in ACQUIRE.
     """
     detection = [[1.0, 2.0, 0.5]]
-    track_filter = StubTrackFilter.__new__(StubTrackFilter)
-    track_filter._position = [1.0, 1.0, 1.0]
-    track_filter._velocity = [0.0, 0.0, 0.0]
-
-    class NotYetInitFilter:
-        def reset(self): pass
-        def is_initialised(self): return False
+    track_filter = CapturingTrackFilter(
+        position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0], initialised=False
+    )
 
     fsm, _, _ = _make_fsm(
         detections=detection, acquire_frames=3,
-        track_filter=NotYetInitFilter()
+        track_filter=track_filter,
     )
     for _ in range(3):
         fsm.step()
+    # After 3 steps the transition has fired but _do_acquire has not yet run.
+    # State must already be ACQUIRE.
     assert fsm.state == AtlasFSM.ACQUIRE
 
 
 def test_search_requires_consecutive_detections():
     """A no-detection frame resets the counter; acquire_frames must start over."""
     detection = [[1.0, 2.0, 0.5]]
-    no_detection = []
 
     # Use a custom StubSearchRadar that alternates detections and blanks
     class AlternatingRadar:
@@ -227,18 +230,25 @@ def test_search_requires_consecutive_detections():
 def test_search_single_frame_acquire():
     """acquire_frames=1 means a single detection step triggers ACQUIRE.
 
-    Uses a not-yet-initialised filter so the FSM stays in ACQUIRE after entry.
-    """
-    class NotYetInitFilter:
-        def reset(self): pass
-        def is_initialised(self): return False
+    Uses a not-yet-initialised filter so the FSM stays in ACQUIRE after the
+    ACQUIRE handler runs on the following step.
 
+    Step sequence:
+      Step 1: SEARCH handler detects target → transitions to ACQUIRE (no ACQUIRE
+              handler runs yet).
+      Step 2: ACQUIRE handler runs; filter not initialised → remains in ACQUIRE.
+    """
+    track_filter = CapturingTrackFilter(
+        position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0], initialised=False
+    )
     detection = [[1.0, 2.0, 0.5]]
     fsm, _, _ = _make_fsm(
         detections=detection, acquire_frames=1,
-        track_filter=NotYetInitFilter()
+        track_filter=track_filter,
     )
-    fsm.step()
+    fsm.step()   # SEARCH → ACQUIRE (transition only; ACQUIRE handler not yet run)
+    assert fsm.state == AtlasFSM.ACQUIRE
+    fsm.step()   # ACQUIRE handler runs; filter not initialised → stays in ACQUIRE
     assert fsm.state == AtlasFSM.ACQUIRE
 
 
@@ -284,7 +294,22 @@ class CapturingTrackFilter(StubTrackFilter):
 
 
 def _make_fsm_with_capturing(acquire_frames=1, initialised=True):
-    """Build an FSM with capturing stubs for verifying entry actions."""
+    """Build an FSM with capturing stubs for verifying ACQUIRE entry actions.
+
+    Args:
+        acquire_frames: consecutive detection steps needed to leave SEARCH.
+            Default 1 so the very first step triggers the SEARCH→ACQUIRE
+            transition, minimising setup noise in ACQUIRE-focused tests.
+        initialised: passed to CapturingTrackFilter.  When False the FSM
+            stays in ACQUIRE indefinitely (filter never initialises), letting
+            callers assert ACQUIRE-internal behaviour without the FSM
+            advancing to TRACK.  When True the FSM moves to TRACK on the
+            first step that runs the ACQUIRE handler.
+
+    Returns:
+        (fsm, search_radar, fcr, track_filter) — the FSM and each capturing
+        stub, all pre-wired together and ready for fsm.step() calls.
+    """
     detection = [[1.0, 2.0, 0.5]]
     pan_motor = StubMotor()
     tilt_motor = StubMotor()
@@ -313,54 +338,83 @@ def _make_fsm_with_capturing(acquire_frames=1, initialised=True):
 def test_acquire_calls_set_target_on_fcr():
     """On entering ACQUIRE, fcr.set_target() must be called exactly once.
 
-    Uses initialised=False so the FSM stays in ACQUIRE (does not immediately
-    fall through to TRACK), allowing the state assertion to be meaningful.
+    Uses initialised=False so the FSM stays in ACQUIRE after entry actions fire,
+    allowing the state assertion to be meaningful.
+
+    Step sequence (acquire_frames=1):
+      Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
+      Step 2: ACQUIRE handler runs; entry actions fire; filter not init → stays.
     """
     fsm, search_radar, fcr, track_filter = _make_fsm_with_capturing(
         acquire_frames=1, initialised=False
     )
-    fsm.step()  # detection → ACQUIRE, entry actions fire; filter not initialised → stays
+    fsm.step()  # SEARCH → ACQUIRE (transition only)
+    fsm.step()  # ACQUIRE handler: entry actions fire; filter not initialised → stays
     assert fsm.state == AtlasFSM.ACQUIRE
     assert len(fcr.set_target_calls) == 1
 
 
 def test_acquire_calls_set_target_on_search_radar():
-    """On entering ACQUIRE, search_radar.set_target() must be called exactly once."""
+    """On entering ACQUIRE, search_radar.set_target() must be called exactly once.
+
+    Step sequence (acquire_frames=1, initialised=True):
+      Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
+      Step 2: ACQUIRE handler runs; entry actions fire; filter initialised → TRACK.
+    """
     fsm, search_radar, fcr, track_filter = _make_fsm_with_capturing(acquire_frames=1)
-    fsm.step()  # detection → ACQUIRE, entry actions fire
+    fsm.step()  # SEARCH → ACQUIRE (transition only)
+    fsm.step()  # ACQUIRE handler: entry actions fire; filter initialised → TRACK
     assert len(search_radar.set_target_calls) == 1
 
 
 def test_acquire_calls_track_filter_reset():
-    """On entering ACQUIRE, track_filter.reset() must be called exactly once."""
+    """On entering ACQUIRE, track_filter.reset() must be called exactly once.
+
+    Step sequence (acquire_frames=1, initialised=True):
+      Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
+      Step 2: ACQUIRE handler runs; entry actions fire; filter initialised → TRACK.
+    """
     fsm, search_radar, fcr, track_filter = _make_fsm_with_capturing(acquire_frames=1)
-    fsm.step()  # detection → ACQUIRE, entry actions fire
+    fsm.step()  # SEARCH → ACQUIRE (transition only)
+    fsm.step()  # ACQUIRE handler: entry actions fire; filter initialised → TRACK
     assert track_filter.reset_calls == 1
 
 
 def test_acquire_entry_actions_fire_exactly_once():
-    """Entry actions (set_target / reset) must NOT repeat on subsequent steps in ACQUIRE."""
+    """Entry actions (set_target / reset) must NOT repeat on subsequent steps in ACQUIRE.
+
+    Step sequence (acquire_frames=1, initialised=False):
+      Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
+      Step 2: ACQUIRE handler runs for the first time; entry actions fire.
+      Step 3: ACQUIRE handler runs again; entry actions must NOT fire again.
+      Step 4: ACQUIRE handler runs again; entry actions must NOT fire again.
+    """
     # initialised=False so FSM stays in ACQUIRE for multiple steps
     fsm, search_radar, fcr, track_filter = _make_fsm_with_capturing(
         acquire_frames=1, initialised=False
     )
-    fsm.step()  # SEARCH → ACQUIRE (entry actions fire)
-    fsm.step()  # still ACQUIRE (entry actions must NOT fire again)
-    fsm.step()  # still ACQUIRE
+    fsm.step()  # SEARCH → ACQUIRE (transition only; no ACQUIRE handler yet)
+    fsm.step()  # ACQUIRE handler runs; entry actions fire
+    fsm.step()  # still ACQUIRE; entry actions must NOT fire again
+    fsm.step()  # still ACQUIRE; entry actions must NOT fire again
     assert len(fcr.set_target_calls) == 1
     assert len(search_radar.set_target_calls) == 1
     assert track_filter.reset_calls == 1
 
 
 def test_acquire_transitions_to_track_when_filter_initialised():
-    """ACQUIRE must transition to TRACK once track_filter.is_initialised() is True."""
+    """ACQUIRE must transition to TRACK once track_filter.is_initialised() is True.
+
+    Step sequence (acquire_frames=1, initialised=True):
+      Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
+      Step 2: ACQUIRE handler runs; entry actions fire; filter already initialised
+              → transitions to TRACK immediately.
+    """
     fsm, search_radar, fcr, track_filter = _make_fsm_with_capturing(
         acquire_frames=1, initialised=True
     )
-    # Step 1: SEARCH → ACQUIRE (entry actions); track_filter is already initialised
-    # so the same step or the next should move us to TRACK
-    fsm.step()
-    # After entry, filter is initialised, so should be in TRACK
+    fsm.step()   # SEARCH → ACQUIRE (transition only)
+    fsm.step()   # ACQUIRE handler: entry actions fire; filter initialised → TRACK
     assert fsm.state == AtlasFSM.TRACK
 
 
@@ -413,11 +467,18 @@ def test_acquire_transitions_to_track_after_filter_initialises():
     config = FSMConfig(acquire_frames=1)
     fsm = AtlasFSM(sensors, hardware, config)
 
-    fsm.step()   # SEARCH → ACQUIRE; is_initialised call 1 → False
+    # Step sequence (acquire_frames=1, LateInitFilter delay=2):
+    #   Step 1: SEARCH → ACQUIRE transition; is_initialised not called yet.
+    #   Step 2: ACQUIRE handler; entry actions fire; is_initialised call 1 → False.
+    #   Step 3: ACQUIRE handler; is_initialised call 2 → False.
+    #   Step 4: ACQUIRE handler; is_initialised call 3 → True → TRACK.
+    fsm.step()   # SEARCH → ACQUIRE (transition only; no ACQUIRE handler yet)
     assert fsm.state == AtlasFSM.ACQUIRE
-    fsm.step()   # ACQUIRE; is_initialised call 2 → False
+    fsm.step()   # ACQUIRE handler; is_initialised call 1 → False
     assert fsm.state == AtlasFSM.ACQUIRE
-    fsm.step()   # ACQUIRE; is_initialised call 3 → True → transition to TRACK
+    fsm.step()   # ACQUIRE handler; is_initialised call 2 → False
+    assert fsm.state == AtlasFSM.ACQUIRE
+    fsm.step()   # ACQUIRE handler; is_initialised call 3 → True → TRACK
     assert fsm.state == AtlasFSM.TRACK
 
 
