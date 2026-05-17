@@ -112,6 +112,12 @@ class AtlasFSM:
         self._target = None             # selected target (detection position vector)
         self._acquire_entry_done = False  # guard: entry actions fire exactly once
 
+        # TRACK bookkeeping
+        self._track_frames = 0          # consecutive steps spent in TRACK
+
+        # PREDICT bookkeeping
+        self._intercept = None          # validated intercept point for AIMING
+
     def step(self) -> None:
         """Advance FSM by one timestep.
 
@@ -202,12 +208,44 @@ class AtlasFSM:
             self._transition(self.TRACK)
 
     def _do_track(self) -> None:
-        """Execute one timestep of TRACK state logic. (Task 7 — not yet implemented.)"""
-        raise NotImplementedError
+        """Execute one timestep of TRACK state logic.
+
+        Reads the current filtered target position from the TrackFilter, commands
+        both motors to aim at it, and increments the frame counter. When the
+        counter reaches config.min_track_frames the FSM transitions to PREDICT.
+
+        Position is relative [dx, dy, dz] from the turret origin (metres, Z-up ENU).
+        Motor angles are computed via _compute_aim_angles().
+        """
+        position = self.sensors.track_filter.get_position()
+        pan, tilt = self._compute_aim_angles(position)
+        self.hardware.pan_motor.setPosition(pan)
+        self.hardware.tilt_motor.setPosition(tilt)
+
+        self._track_frames += 1
+        if self._track_frames >= self.config.min_track_frames:
+            self._transition(self.PREDICT)
 
     def _do_predict(self) -> None:
-        """Execute one timestep of PREDICT state logic. (Task 7 — not yet implemented.)"""
-        raise NotImplementedError
+        """Execute one timestep of PREDICT state logic.
+
+        Computes a ballistic intercept point for config.lookahead_steps ahead
+        and validates it. If the intercept is within max_range AND above
+        ground_threshold, stores it on self._intercept and transitions to AIMING.
+        If the intercept is invalid (out of range or below ground), transitions
+        back to TRACK to continue refining the estimate before retrying.
+
+        The intercept is stored as relative [dx, dy, dz] (metres, Z-up ENU)
+        from the turret origin, ready for AIMING to consume.
+        """
+        intercept = self.sensors.ballistic_predictor.get_intercept(
+            self.config.lookahead_steps
+        )
+        if self._target_in_range(intercept):
+            self._intercept = intercept
+            self._transition(self.AIMING)
+        else:
+            self._transition(self.TRACK)
 
     def _do_aim(self) -> None:
         """Execute one timestep of AIMING state logic. (Task 8 — not yet implemented.)"""
@@ -275,3 +313,5 @@ class AtlasFSM:
             self._pan_angle = 0.0
         elif new_state == self.ACQUIRE:
             self._acquire_entry_done = False
+        elif new_state == self.TRACK:
+            self._track_frames = 0

@@ -549,3 +549,202 @@ def test_target_in_range_exactly_at_max_range():
     fsm, _, _ = _make_fsm()
     # Distance = 10.0, dz = 1.0 > ground_threshold
     assert fsm._target_in_range([0.0, 0.0, 10.0]) is True
+
+
+# ---------------------------------------------------------------------------
+# _do_track — helpers
+# ---------------------------------------------------------------------------
+
+def _make_fsm_in_track(
+    position=None,
+    min_track_frames=5,
+):
+    """Build an AtlasFSM already in TRACK state with a fixed filter position.
+
+    The FSM state and _track_frames counter are set directly — this avoids
+    stepping through SEARCH and ACQUIRE in every TRACK/PREDICT test, and is
+    consistent with how the existing test suite manipulates mid-pipeline state.
+
+    Args:
+        position:         Relative [dx, dy, dz] that StubTrackFilter reports.
+                          Defaults to [1.0, 2.0, 3.0].
+        min_track_frames: FSMConfig.min_track_frames — kept small for fast tests.
+
+    Returns:
+        (fsm, pan_motor, tilt_motor) tuple.
+    """
+    if position is None:
+        position = [1.0, 2.0, 3.0]
+
+    track_filter = StubTrackFilter(position=position, velocity=[0.0, 0.0, 0.0])
+    pan_motor = StubMotor()
+    tilt_motor = StubMotor()
+    sensors = SensorSuite(
+        search_radar=StubSearchRadar([]),
+        fcr=StubFCR(position=[1.0, 1.0, 1.0]),
+        track_filter=track_filter,
+        ballistic_predictor=None,
+    )
+    hardware = TurretHardware(
+        pan_motor=pan_motor,
+        tilt_motor=tilt_motor,
+        turret_position=TURRET_POS,
+        timestep_ms=32,
+    )
+    config = FSMConfig(min_track_frames=min_track_frames)
+    fsm = AtlasFSM(sensors, hardware, config)
+    fsm.state = AtlasFSM.TRACK
+    fsm._track_frames = 0
+    return fsm, pan_motor, tilt_motor
+
+
+# ---------------------------------------------------------------------------
+# _do_track — motor aiming
+# ---------------------------------------------------------------------------
+
+def test_track_aims_pan_motor_at_filtered_position():
+    """TRACK must command the pan motor to the angle computed from the filter position.
+
+    Position [1.0, 2.0, 3.0] → pan = atan2(1.0, 2.0).
+    """
+    position = [1.0, 2.0, 3.0]
+    fsm, pan, _ = _make_fsm_in_track(position=position)
+    fsm.step()
+    expected_pan = math.atan2(position[0], position[1])
+    assert pan.position == pytest.approx(expected_pan)
+
+
+def test_track_aims_tilt_motor_at_filtered_position():
+    """TRACK must command the tilt motor to the angle computed from the filter position.
+
+    Position [1.0, 2.0, 3.0] → tilt = atan2(3.0, sqrt(1.0² + 2.0²)).
+    """
+    position = [1.0, 2.0, 3.0]
+    fsm, _, tilt = _make_fsm_in_track(position=position)
+    fsm.step()
+    expected_tilt = math.atan2(position[2], math.sqrt(position[0]**2 + position[1]**2))
+    assert tilt.position == pytest.approx(expected_tilt)
+
+
+def test_track_increments_frame_counter_each_step():
+    """_track_frames must increment by 1 on every TRACK step."""
+    fsm, _, _ = _make_fsm_in_track(min_track_frames=100)
+    for expected in range(1, 4):
+        fsm.step()
+        assert fsm._track_frames == expected
+
+
+# ---------------------------------------------------------------------------
+# _do_predict — helpers
+# ---------------------------------------------------------------------------
+
+class StubPredictor:
+    """Minimal ballistic predictor stub that returns a fixed intercept.
+
+    Args:
+        intercept: The [dx, dy, dz] value returned by get_intercept(), regardless
+                   of the lookahead_steps argument.
+    """
+
+    def __init__(self, intercept):
+        self._intercept = intercept
+
+    def get_intercept(self, lookahead_steps):
+        return list(self._intercept)
+
+
+def _make_fsm_in_predict(intercept, max_range=10.0, ground_threshold=0.1):
+    """Build an AtlasFSM in PREDICT state with a controllable StubPredictor.
+
+    Args:
+        intercept:        The [dx, dy, dz] intercept the predictor will return.
+        max_range:        FSMConfig.max_range (metres).
+        ground_threshold: FSMConfig.ground_threshold (metres).
+
+    Returns:
+        (fsm, pan_motor, tilt_motor) tuple.
+    """
+    predictor = StubPredictor(intercept)
+    track_filter = StubTrackFilter(position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0])
+    pan_motor = StubMotor()
+    tilt_motor = StubMotor()
+    sensors = SensorSuite(
+        search_radar=StubSearchRadar([]),
+        fcr=StubFCR(position=[1.0, 1.0, 1.0]),
+        track_filter=track_filter,
+        ballistic_predictor=predictor,
+    )
+    hardware = TurretHardware(
+        pan_motor=pan_motor,
+        tilt_motor=tilt_motor,
+        turret_position=TURRET_POS,
+        timestep_ms=32,
+    )
+    config = FSMConfig(max_range=max_range, ground_threshold=ground_threshold)
+    fsm = AtlasFSM(sensors, hardware, config)
+    fsm.state = AtlasFSM.PREDICT
+    return fsm, pan_motor, tilt_motor
+
+
+# ---------------------------------------------------------------------------
+# _do_predict — transitions and intercept storage
+# ---------------------------------------------------------------------------
+
+def test_predict_valid_intercept_transitions_to_aiming():
+    """PREDICT with a valid (in-range, above-ground) intercept must transition to AIMING."""
+    # [0.0, 2.0, 1.0]: distance=sqrt(5)≈2.24 < max_range=10.0; dz=1.0 > ground_threshold=0.1
+    fsm, _, _ = _make_fsm_in_predict(intercept=[0.0, 2.0, 1.0])
+    fsm.step()
+    assert fsm.state == AtlasFSM.AIMING
+
+
+def test_predict_valid_intercept_stores_intercept():
+    """PREDICT with a valid intercept must store it on self._intercept."""
+    intercept = [0.0, 2.0, 1.0]
+    fsm, _, _ = _make_fsm_in_predict(intercept=intercept)
+    fsm.step()
+    assert fsm._intercept == pytest.approx(intercept)
+
+
+def test_predict_out_of_range_intercept_transitions_to_track():
+    """PREDICT with an out-of-range intercept must transition back to TRACK.
+
+    Distance = sqrt(8² + 8² + 8²) ≈ 13.86 > max_range=10.0 → invalid.
+    """
+    fsm, _, _ = _make_fsm_in_predict(intercept=[8.0, 8.0, 8.0], max_range=10.0)
+    fsm.step()
+    assert fsm.state == AtlasFSM.TRACK
+
+
+def test_predict_below_ground_intercept_transitions_to_track():
+    """PREDICT with a below-ground intercept must transition back to TRACK.
+
+    dz = 0.0 ≤ ground_threshold=0.1 → invalid regardless of distance.
+    """
+    fsm, _, _ = _make_fsm_in_predict(
+        intercept=[1.0, 1.0, 0.0], ground_threshold=0.1
+    )
+    fsm.step()
+    assert fsm.state == AtlasFSM.TRACK
+
+
+def test_track_stays_in_track_before_min_frames():
+    """TRACK must remain in TRACK while frame count < min_track_frames."""
+    min_track_frames = 3
+    fsm, _, _ = _make_fsm_in_track(min_track_frames=min_track_frames)
+    for _ in range(min_track_frames - 1):
+        fsm.step()
+    assert fsm.state == AtlasFSM.TRACK
+
+
+def test_track_transitions_to_predict_at_min_frames():
+    """TRACK must transition to PREDICT on the step that reaches min_track_frames.
+
+    The transition fires when _track_frames reaches min_track_frames; the PREDICT
+    handler does NOT run on that same step (single-dispatch per step).
+    """
+    min_track_frames = 3
+    fsm, _, _ = _make_fsm_in_track(min_track_frames=min_track_frames)
+    for _ in range(min_track_frames):
+        fsm.step()
+    assert fsm.state == AtlasFSM.PREDICT
