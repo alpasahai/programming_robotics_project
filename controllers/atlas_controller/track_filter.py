@@ -15,6 +15,9 @@ from filterpy.kalman import KalmanFilter
 
 _GRAVITY = -9.81  # m/s², applied on Z axis via control input
 
+# Large initial diagonal covariance — signals high uncertainty before first measurement.
+_INITIAL_COVARIANCE = 1000.0
+
 
 class TrackFilter:
     """Kalman filter that fuses FCR and SearchRadar measurements into a
@@ -64,10 +67,8 @@ class TrackFilter:
                          (wind, drag, launch variability).
         """
         dt = timestep_ms / 1000.0
-        self._dt = dt
         self._R_fcr = R_fcr
         self._R_search = R_search
-        self._initialised = False
 
         # dim_x=6: [x, y, z, vx, vy, vz]
         # dim_z=3: [x, y, z] measurements
@@ -110,11 +111,8 @@ class TrackFilter:
         # --- Process noise Q: scaled identity ---
         self.kf.Q = np.eye(6) * Q
 
-        # --- Initial covariance P: large diagonal — high uncertainty at start ---
-        self.kf.P = np.eye(6) * 1000.0
-
-        # --- Initial state x: zero — position unknown until first measurement ---
-        self.kf.x = np.zeros((6, 1))
+        # Initialise state, covariance, and the initialised flag.
+        self._reset_state()
 
     def predict(self) -> None:
         """Propagate Kalman state one timestep forward using the ballistic model.
@@ -155,6 +153,18 @@ class TrackFilter:
         self.kf.update(np.array(measurement, dtype=float).reshape(3, 1))
         self._initialised = True
 
+    def _reset_state(self) -> None:
+        """Zero the Kalman state, reset covariance to initial uncertainty, and
+        clear the initialised flag.
+
+        Called from __init__ and reset() to guarantee both code paths set
+        identical starting conditions. Using _INITIAL_COVARIANCE here ensures
+        the two call sites cannot diverge.
+        """
+        self.kf.x = np.zeros((6, 1))
+        self.kf.P = np.eye(6) * _INITIAL_COVARIANCE
+        self._initialised = False
+
     def reset(self) -> None:
         """Reinitialise Kalman state and covariance to defaults.
 
@@ -162,9 +172,7 @@ class TrackFilter:
         Clears stale history from any previous engagement and resets
         is_initialised() to False so the FSM waits for a fresh measurement.
         """
-        self.kf.x = np.zeros((6, 1))
-        self.kf.P = np.eye(6) * 1000.0
-        self._initialised = False
+        self._reset_state()
 
     def get_position(self) -> list[float]:
         """Return current filtered position estimate [x, y, z] in metres.

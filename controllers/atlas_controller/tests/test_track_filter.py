@@ -155,8 +155,8 @@ def test_B_matrix_maps_gravity_to_velocity():
     """kf.B must route the 3-element acceleration control input [ax,ay,az]
     into the velocity components of the 6-element state.
 
-    With u = [0, 0, -9.81] and B as the half-dt² / dt matrix, only the
-    velocity rows are non-zero. Specifically:
+    Only the velocity rows are non-zero — gravity enters velocity directly,
+    and position integrates velocity through F, not B. Specifically:
 
         B = [ 0   0   0  ]   <- x position unaffected by acceleration directly
             [ 0   0   0  ]   <- y position unaffected
@@ -177,6 +177,21 @@ def test_B_matrix_maps_gravity_to_velocity():
         [0,  0,  DT],
     ], dtype=float)
     np.testing.assert_array_almost_equal(tf.kf.B, expected_B)
+
+
+# ---------------------------------------------------------------------------
+# Slice 7b: Q matrix — scaled identity
+# ---------------------------------------------------------------------------
+
+def test_Q_matrix_is_scaled_identity():
+    """kf.Q must equal Q_scale * I₆.
+
+    The process noise matrix is an isotropic scaled identity, capturing
+    model mismatch uniformly across all state dimensions.
+    """
+    tf = make_filter()
+    expected_Q = Q_SCALE * np.eye(6)
+    np.testing.assert_array_almost_equal(tf.kf.Q, expected_Q)
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +230,9 @@ def test_predict_propagates_position_by_velocity():
     tf.predict()
     pos = tf.get_position()
     # x advances by vx*dt, y and z unchanged (vy=vz=0 before gravity step)
-    assert pytest.approx(pos[0], abs=1e-9) == 2.0 + 1.0 * DT
-    assert pytest.approx(pos[1], abs=1e-9) == 3.0
-    assert pytest.approx(pos[2], abs=1e-9) == 4.0
+    assert pos[0] == pytest.approx(2.0 + 1.0 * DT, abs=1e-9)
+    assert pos[1] == pytest.approx(3.0, abs=1e-9)
+    assert pos[2] == pytest.approx(4.0, abs=1e-9)
 
 
 def test_predict_applies_gravity_to_vz():
@@ -251,7 +266,10 @@ def test_predict_parabolic_z_over_multiple_steps():
     t = N * DT
     expected_z = z0 + 0.5 * GRAVITY * t**2  # continuum approximation
     pos = tf.get_position()
-    # Allow 1% relative tolerance — discrete integration error over 10 steps
+    # Allow 1% relative tolerance. The discrete Euler integrator accumulates
+    # O(g·dt²) error per step, giving a total O(g·N·dt²) lag relative to the
+    # continuous parabola. Over 10 steps at dt=0.032 s this is ~0.003 m, well
+    # within 1% of |expected_z|.
     assert abs(pos[2] - expected_z) < abs(expected_z) * 0.01 + 1e-6
 
 
