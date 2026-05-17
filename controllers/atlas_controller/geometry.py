@@ -26,7 +26,7 @@ def azimuth_elevation_range(
 
     Returns:
         Tuple (azimuth, elevation, range) where:
-            - azimuth is in radians, range [-π, π]
+            - azimuth is in radians, range (-π, π]
             - elevation is in radians, range [-π/2, π/2]
             - range is in metres (always ≥ 0)
     """
@@ -45,7 +45,7 @@ def azimuth_elevation_range(
 def angle_diff(a: float, b: float) -> float:
     """Compute the shortest signed difference between two angles.
 
-    Returns `a - b` wrapped to the interval [-π, π] using the atan2 identity:
+    Returns `a - b` wrapped to the interval (-π, π] using the atan2 identity:
         wrapped_diff = atan2(sin(diff), cos(diff))
 
     This ensures the result always represents the shortest rotational path
@@ -56,7 +56,7 @@ def angle_diff(a: float, b: float) -> float:
         b: Second angle in radians.
 
     Returns:
-        Shortest signed difference in radians, always in [-π, π].
+        Shortest signed difference in radians, always in (-π, π].
     """
     diff = a - b
     return math.atan2(math.sin(diff), math.cos(diff))
