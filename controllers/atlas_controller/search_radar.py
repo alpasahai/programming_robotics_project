@@ -2,8 +2,11 @@
 
 See ADR-0006 for the sensor-membrane and track-id identity contract.
 """
+import math
 import random
 from typing import NamedTuple
+
+from geometry import azimuth_elevation_range
 
 
 class Detection(NamedTuple):
@@ -40,6 +43,17 @@ class SearchRadar:
     measurements of the locked target, which are fused into the TrackFilter
     alongside FCR.
 
+    Gating: each projectile is only reported when both:
+      - Euclidean distance from ``radar_position`` ≤ ``max_range``
+      - |elevation| (Z-up ENU) ≤ ``vertical_fov / 2``
+
+    Note: ``radar_position`` is used for gating only. ``Detection.position``
+    is always reported relative to ``turret_position`` (ADR-0006 membrane).
+
+    Deferred scan parameters (``beam_width``, ``scan_rate``, ``track_timeout``)
+    are accepted and stored now so the constructor signature is stable, but no
+    scan logic is active yet (Tasks 3–4).
+
     See ADR-0003 for the continuous sensor fusion rationale.
     See ADR-0006 for the sensor-membrane and track-id identity contract.
     """
@@ -48,8 +62,14 @@ class SearchRadar:
         self,
         projectiles: list,
         turret_position: list[float],
+        radar_position: list[float],
         noise_std: float,
         timestep_ms: int,
+        max_range: float,
+        vertical_fov: float,
+        beam_width: float = math.radians(10),
+        scan_rate: float = math.radians(30),
+        track_timeout: int = 3,
         rng: random.Random | None = None,
     ) -> None:
         """
@@ -59,41 +79,77 @@ class SearchRadar:
                              (ADR-0006). The list must not be reordered after
                              construction so that track_ids remain stable.
             turret_position: World-frame [x, y, z] of the turret origin.
+                             Used only to compute the turret-relative output
+                             position in Detection objects.
+            radar_position:  World-frame [x, y, z] of the radar antenna phase
+                             centre. Used for range and elevation gating.
+                             May differ from turret_position.
             noise_std:       Standard deviation of Gaussian noise (metres).
                              Should be significantly higher than FCR noise_std.
             timestep_ms:     Simulation timestep in milliseconds.
                              Stored for interface consistency; currently unused
                              by any method.
+            max_range:       Maximum detection range in metres. Projectiles
+                             farther than this from radar_position are ignored.
+            vertical_fov:    Full vertical field of view in radians. A
+                             projectile is accepted only when
+                             |elevation| ≤ vertical_fov / 2.
+            beam_width:      (Deferred — Task 3) Half-power beam width in
+                             radians. Stored but not yet used in scan logic.
+            scan_rate:       (Deferred — Task 3) Scan rate in radians per
+                             second. Stored but not yet used in scan logic.
+            track_timeout:   (Deferred — Task 4) Number of missed updates
+                             before a track is dropped. Stored but not yet
+                             used.
             rng:             Optional seeded ``random.Random`` instance for
                              deterministic noise in tests. When ``None``, a
                              fresh ``random.Random()`` is created.
         """
         self._projectiles = projectiles
         self._turret_position = list(turret_position)
+        self._radar_position = list(radar_position)
         self._noise_std = noise_std
         self._timestep_ms = timestep_ms
+        self._max_range = max_range
+        self._half_fov = vertical_fov / 2.0
+        # Deferred scan parameters (Tasks 3–4): stored, not yet used.
+        self._beam_width = beam_width
+        self._scan_rate = scan_rate
+        self._track_timeout = track_timeout
         self._rng = rng if rng is not None else random.Random()
         self._detections: list[Detection] = []
         self._target_node = None
         self._target_position: list[float] | None = None
 
     def update(self) -> None:
-        """Read all projectile positions, add noise, store as Detection objects.
+        """Read all projectile positions, gate by range and FOV, add noise.
 
         For each projectile in ``self._projectiles`` (enumerated so that the
         index serves as track_id per ADR-0006):
         1. Reads its world-frame position via ``getPosition()``.
-        2. Subtracts ``turret_position`` to get a turret-relative vector.
-        3. Adds independent Gaussian noise (std ``noise_std``) on each axis.
-        4. Stores a ``Detection(track_id=index, position=noisy_vector)``.
+        2. Computes azimuth, elevation, and range relative to radar_position
+           using ``geometry.azimuth_elevation_range``.
+        3. Rejects the projectile if range > max_range or
+           |elevation| > vertical_fov / 2.
+        4. For accepted projectiles: subtracts turret_position (not
+           radar_position) and adds independent Gaussian noise on each axis.
+        5. Stores a ``Detection(track_id=index, position=noisy_vector)``.
 
-        Populates both the full detections list (``get_detections()``) and,
-        when a target has been locked via ``set_target()``, the single-target
-        measurement (``get_target_position()``).
+        The locked target (set via ``set_target()``) is only updated when it
+        passes the gate. If it fails the gate in a given cycle,
+        ``get_target_position()`` retains the previous reading (stale but
+        non-None, does not crash).
         """
         self._detections = []
         for index, proj in enumerate(self._projectiles):
             world = proj.getPosition()
+            _az, elevation, rng = azimuth_elevation_range(self._radar_position, world)
+
+            if rng > self._max_range:
+                continue
+            if abs(elevation) > self._half_fov:
+                continue
+
             noisy = [
                 world[i] - self._turret_position[i] + self._rng.gauss(0.0, self._noise_std)
                 for i in range(3)
@@ -115,7 +171,7 @@ class SearchRadar:
 
         Used during SEARCH so the FSM can evaluate all returns and select
         one to lock onto. Returns an empty list before the first ``update()``
-        or when no projectiles are present.
+        or when no projectiles are present or all are gated out.
         """
         return list(self._detections)
 
@@ -124,9 +180,12 @@ class SearchRadar:
 
         Returns:
             Noisy turret-relative ``[dx, dy, dz]`` (metres) of the locked
-            target, updated each ``update()`` call.
+            target, updated each ``update()`` call when the target passes the
+            range and FOV gates.
             ``None`` if ``set_target()`` has not been called yet, or
             immediately after ``set_target()`` before the next ``update()``.
+            When the locked target fails the gate in a cycle, the previous
+            reading is retained (stale) and this method does not crash.
         """
         return self._target_position
 
