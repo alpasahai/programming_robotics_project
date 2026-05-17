@@ -73,7 +73,7 @@ def test_z_applies_gravity_drop():
     predictor = make_predictor(pos, vel, timestep_ms)
     result = predictor.get_intercept(lookahead)
 
-    T = 1.0
+    T = lookahead * timestep_ms / 1000.0   # 1.0 s
     expected_z = 10.0 + 0.0 * T - 0.5 * GRAVITY * T ** 2   # 10 - 4.905 = 5.095
     assert result[2] == pytest.approx(expected_z)
 
@@ -118,11 +118,10 @@ def test_doubling_lookahead_steps_doubles_T():
     vel = [2.0, 0.0, 0.0]    # only vx; gravity irrelevant for x
     timestep_ms = 100
 
-    pred_1 = make_predictor(pos, vel, timestep_ms)
-    pred_2 = make_predictor(pos, vel, timestep_ms)
+    predictor = make_predictor(pos, vel, timestep_ms)
 
-    r1 = pred_1.get_intercept(5)    # T = 0.5 s → x = 1.0
-    r2 = pred_2.get_intercept(10)   # T = 1.0 s → x = 2.0
+    r1 = predictor.get_intercept(5)    # T = 0.5 s → x = 1.0
+    r2 = predictor.get_intercept(10)   # T = 1.0 s → x = 2.0
 
     # x displacement must double
     assert r2[0] == pytest.approx(2.0 * r1[0])
@@ -134,6 +133,7 @@ def test_doubling_timestep_ms_doubles_T():
     vel = [3.0, 0.0, 0.0]    # only vx
     lookahead = 5
 
+    # larger timestep_ms -> larger T for the same lookahead count
     pred_slow = make_predictor(pos, vel, timestep_ms=100)   # T = 0.5 s
     pred_fast = make_predictor(pos, vel, timestep_ms=200)   # T = 1.0 s
 
@@ -175,3 +175,4 @@ def test_get_intercept_returns_list_of_3_floats():
 
     assert isinstance(result, list)
     assert len(result) == 3
+    assert all(isinstance(v, float) for v in result)
