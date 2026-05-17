@@ -190,28 +190,31 @@ class AtlasFSM:
             self._detection_count = 0
 
         if self._detection_count >= self.config.acquire_frames:
-            self._target = detections[0]
+            self._target = detections[0].track_id
             self._transition(self.ACQUIRE)
 
     def _do_acquire(self) -> None:
         """Execute one timestep of ACQUIRE state logic.
 
-        Entry (first call only): calls set_target() on both FCR and
-        SearchRadar with the selected target, and resets the TrackFilter.
-        These entry actions fire exactly once, guarded by _acquire_entry_done.
+        Entry (first call only): locks the SearchRadar onto the selected
+        target via ``search_radar.set_target(track_id)`` and resets the
+        TrackFilter. These entry actions fire exactly once, guarded by
+        ``_acquire_entry_done``.
 
-        Each step: checks track_filter.is_initialised(). When True, transitions
-        to TRACK.
+        FCR is NOT re-targeted here. Per ADR-0006 the Fire-Control Radar is
+        single-target and cued at construction; the FSM does not call
+        ``fcr.set_target``. Only the SearchRadar (wide-beam) is locked by the
+        FSM at ACQUIRE.
 
-        DESIGN NOTE — node vs position mismatch: The selected target stored in
-        self._target is a detection position vector ([dx, dy, dz]), not a Webots
-        node handle. Both set_target() interfaces expect a node handle. This
-        mismatch is benign for Task 6 because the stub set_target() is a no-op
-        accepting any argument, but MUST be resolved when wiring the real
-        controller in Task 9. See the Task 6 report for details.
+        Each step: checks ``track_filter.is_initialised()``. When True,
+        transitions to TRACK.
+
+        ``self._target`` holds an integer ``track_id`` (ADR-0006) — never a
+        Webots node handle.
+
+        See ADR-0006 for the sensor-membrane and track-id identity contract.
         """
         if not self._acquire_entry_done:
-            self.sensors.fcr.set_target(self._target)
             self.sensors.search_radar.set_target(self._target)
             self.sensors.track_filter.reset()
             self._acquire_entry_done = True

@@ -2,6 +2,7 @@
 import math
 import pytest
 from stubs import StubFCR, StubSearchRadar, StubTrackFilter, StubMotor
+from search_radar import Detection
 from fsm import AtlasFSM, SensorSuite, TurretHardware, FSMConfig
 
 
@@ -22,7 +23,7 @@ def _make_fsm(
     """Build an AtlasFSM wired to stubs.
 
     Args:
-        detections: list of detection vectors returned by StubSearchRadar.
+        detections: list of Detection objects returned by StubSearchRadar.
             Defaults to [] (no detections).
         acquire_frames: FSMConfig.acquire_frames — kept small for fast tests.
         search_speed: radians per step during pan sweep.
@@ -144,7 +145,7 @@ def test_search_consecutive_detections_transition_out_of_search():
       Step 4:    ACQUIRE handler runs for the first time; filter not initialised
                  → remains in ACQUIRE.
     """
-    detection = [[1.0, 2.0, 0.5]]
+    detection = [Detection(track_id=0, position=[1.0, 2.0, 0.5])]
     track_filter = CapturingTrackFilter(
         position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0], initialised=False
     )
@@ -162,9 +163,8 @@ def test_search_consecutive_detections_transition_out_of_search():
 
 def test_search_requires_consecutive_detections():
     """A no-detection frame resets the counter; acquire_frames must start over."""
-    detection = [[1.0, 2.0, 0.5]]
 
-    # Use a custom StubSearchRadar that alternates detections and blanks
+    # Use a custom search radar that alternates detections and blanks
     class AlternatingRadar:
         def __init__(self):
             self._calls = 0
@@ -174,10 +174,10 @@ def test_search_requires_consecutive_detections():
             self._calls += 1
             # Two detections, one blank, two more detections (total 5 calls)
             if self._calls in (1, 2, 4, 5):
-                return [[1.0, 2.0, 0.5]]
+                return [Detection(track_id=0, position=[1.0, 2.0, 0.5])]
             return []
 
-        def set_target(self, node):
+        def set_target(self, track_id):
             self.set_target_called = True
 
     radar = AlternatingRadar()
@@ -229,7 +229,7 @@ def test_search_single_frame_acquire():
     track_filter = CapturingTrackFilter(
         position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0], initialised=False
     )
-    detection = [[1.0, 2.0, 0.5]]
+    detection = [Detection(track_id=0, position=[1.0, 2.0, 0.5])]
     fsm, _, _ = _make_fsm(
         detections=detection, acquire_frames=1,
         track_filter=track_filter,
@@ -238,6 +238,26 @@ def test_search_single_frame_acquire():
     assert fsm.state == AtlasFSM.ACQUIRE
     fsm.step()   # ACQUIRE handler runs; filter not initialised → stays in ACQUIRE
     assert fsm.state == AtlasFSM.ACQUIRE
+
+
+def test_search_selects_first_detection_track_id_as_target():
+    """When transitioning to ACQUIRE, fsm._target must be the track_id int from detections[0].
+
+    Per ADR-0006 the FSM holds only an integer track_id, never a position list
+    or a Webots node.
+    """
+    track_filter = CapturingTrackFilter(
+        position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0], initialised=False
+    )
+    # Two detections; FSM must pick track_id=0 (the first one)
+    detections = [
+        Detection(track_id=0, position=[1.0, 2.0, 0.5]),
+        Detection(track_id=1, position=[3.0, 4.0, 1.0]),
+    ]
+    fsm, _, _ = _make_fsm(detections=detections, acquire_frames=1, track_filter=track_filter)
+    fsm.step()  # SEARCH → ACQUIRE
+    assert fsm._target == 0
+    assert isinstance(fsm._target, int)
 
 
 # ---------------------------------------------------------------------------
@@ -251,8 +271,8 @@ class CapturingSearchRadar(StubSearchRadar):
         super().__init__(detections)
         self.set_target_calls = []
 
-    def set_target(self, node):
-        self.set_target_calls.append(node)
+    def set_target(self, track_id):
+        self.set_target_calls.append(track_id)
 
 
 class CapturingFCR(StubFCR):
@@ -298,7 +318,7 @@ def _make_fsm_with_capturing(acquire_frames=1, initialised=True):
         (fsm, search_radar, fcr, track_filter) — the FSM and each capturing
         stub, all pre-wired together and ready for fsm.step() calls.
     """
-    detection = [[1.0, 2.0, 0.5]]
+    detection = [Detection(track_id=0, position=[1.0, 2.0, 0.5])]
     pan_motor = StubMotor()
     tilt_motor = StubMotor()
     search_radar = CapturingSearchRadar(detection)
@@ -323,13 +343,13 @@ def _make_fsm_with_capturing(acquire_frames=1, initialised=True):
     return fsm, search_radar, fcr, track_filter
 
 
-def test_acquire_calls_set_target_on_fcr():
-    """On entering ACQUIRE, fcr.set_target() must be called exactly once.
+def test_acquire_calls_set_target_on_search_radar_with_track_id():
+    """On entering ACQUIRE, search_radar.set_target() must be called with the integer track_id.
 
-    Uses initialised=False so the FSM stays in ACQUIRE after entry actions fire,
-    allowing the state assertion to be meaningful.
+    Per ADR-0006 the FSM passes an integer track_id (not a node or position) to
+    SearchRadar.set_target(). The SearchRadar resolves the node internally.
 
-    Step sequence (acquire_frames=1):
+    Step sequence (acquire_frames=1, initialised=False):
       Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
       Step 2: ACQUIRE handler runs; entry actions fire; filter not init → stays.
     """
@@ -339,7 +359,27 @@ def test_acquire_calls_set_target_on_fcr():
     fsm.step()  # SEARCH → ACQUIRE (transition only)
     fsm.step()  # ACQUIRE handler: entry actions fire; filter not initialised → stays
     assert fsm.state == AtlasFSM.ACQUIRE
-    assert len(fcr.set_target_calls) == 1
+    assert len(search_radar.set_target_calls) == 1
+    assert search_radar.set_target_calls[0] == 0   # track_id of the first detection
+    assert isinstance(search_radar.set_target_calls[0], int)
+
+
+def test_acquire_does_not_call_set_target_on_fcr():
+    """On entering ACQUIRE, fcr.set_target() must NOT be called.
+
+    Per ADR-0006 FCR is single-target and cued at construction; the FSM does
+    not re-target it.
+
+    Step sequence (acquire_frames=1, initialised=False):
+      Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
+      Step 2: ACQUIRE handler runs; entry actions fire; filter not init → stays.
+    """
+    fsm, search_radar, fcr, track_filter = _make_fsm_with_capturing(
+        acquire_frames=1, initialised=False
+    )
+    fsm.step()  # SEARCH → ACQUIRE (transition only)
+    fsm.step()  # ACQUIRE handler: entry actions fire
+    assert len(fcr.set_target_calls) == 0
 
 
 def test_acquire_calls_set_target_on_search_radar():
@@ -385,8 +425,8 @@ def test_acquire_entry_actions_fire_exactly_once():
     fsm.step()  # ACQUIRE handler runs; entry actions fire
     fsm.step()  # still ACQUIRE; entry actions must NOT fire again
     fsm.step()  # still ACQUIRE; entry actions must NOT fire again
-    assert len(fcr.set_target_calls) == 1
     assert len(search_radar.set_target_calls) == 1
+    assert len(fcr.set_target_calls) == 0
     assert track_filter.reset_calls == 1
 
 
@@ -437,7 +477,7 @@ def test_acquire_transitions_to_track_after_filter_initialises():
             return self._calls > self._delay
 
     late_filter = LateInitFilter(delay=2)
-    detection = [[1.0, 2.0, 0.5]]
+    detection = [Detection(track_id=0, position=[1.0, 2.0, 0.5])]
     pan_motor = StubMotor()
     tilt_motor = StubMotor()
     sensors = SensorSuite(
@@ -1052,7 +1092,7 @@ def _make_fsm_in_reset(intercept=None):
     fsm._intercept = list(intercept)
     fsm._track_frames = 7
     fsm._detection_count = 5
-    fsm._target = [1.0, 2.0, 0.5]
+    fsm._target = 0   # integer track_id (ADR-0006)
     fsm._acquire_entry_done = True
 
     return fsm, pan_motor, tilt_motor

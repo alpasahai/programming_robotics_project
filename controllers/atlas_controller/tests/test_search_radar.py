@@ -3,7 +3,7 @@ import math
 import random
 
 from stubs import StubProjectile
-from search_radar import SearchRadar
+from search_radar import Detection, SearchRadar
 
 
 TURRET_POS = [1.0, 2.0, 0.5]
@@ -40,25 +40,31 @@ def test_set_target_clears_stored_target_position():
     """
     proj = StubProjectile([[3.0, 3.0, 3.0]])
     radar = SearchRadar([proj], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
-    radar.set_target(proj)
+    radar.set_target(0)
     radar.update()
     assert radar.get_target_position() == [3.0, 3.0, 3.0]
 
-    new_node = StubProjectile([[1.0, 1.0, 1.0]])
-    radar.set_target(new_node)
-    assert radar.get_target_position() is None
+    proj2 = StubProjectile([[1.0, 1.0, 1.0]])
+    radar2 = SearchRadar([proj, proj2], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
+    radar2.set_target(0)
+    radar2.update()
+    radar2.set_target(1)
+    assert radar2.get_target_position() is None
 
 
 def test_set_target_filters_to_locked_node():
-    """set_target() causes get_target_position() to return only the locked node's reading.
+    """set_target(track_id) causes get_target_position() to return only the locked target.
 
-    Two projectiles are present; after locking one, get_target_position() must
-    reflect that specific node and not the other.
+    Two projectiles are present; after locking track_id=1, get_target_position()
+    must reflect that specific projectile and not the other.
+
+    See ADR-0006: track_id is an integer index into the projectile list; the
+    SearchRadar resolves it to a node internally.
     """
     proj_a = StubProjectile([[3.0, 4.0, 5.0]])
     proj_b = StubProjectile([[9.0, 8.0, 7.0]])
     radar = SearchRadar([proj_a, proj_b], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
-    radar.set_target(proj_b)
+    radar.set_target(1)
     radar.update()
 
     result = radar.get_target_position()
@@ -84,7 +90,7 @@ def test_update_with_nonzero_noise_perturbs_readings():
     for _ in range(N):
         radar.update()
         detections = radar.get_detections()
-        deviations.extend(detections[0])
+        deviations.extend(detections[0].position)
 
     mean_abs = sum(abs(d) for d in deviations) / len(deviations)
     expected_mean_abs = noise_std * (2 / math.pi) ** 0.5
@@ -95,8 +101,10 @@ def test_update_with_nonzero_noise_perturbs_readings():
 def test_update_noiseless_returns_exact_relative_positions():
     """update() with noise_std=0.0 stores exact turret-relative positions.
 
-    Covers subtraction logic and that get_detections() returns one entry per
-    projectile with no noise contribution.
+    Covers subtraction logic and that get_detections() returns one Detection
+    per projectile with the correct track_id and no noise contribution.
+
+    See ADR-0006: track_id is the projectile's index in the constructor list.
     """
     world_pos_a = [4.0, 5.0, 3.0]
     world_pos_b = [10.0, 0.0, 1.0]
@@ -107,7 +115,31 @@ def test_update_noiseless_returns_exact_relative_positions():
 
     detections = radar.get_detections()
     assert len(detections) == 2
+
     expected_a = [world_pos_a[i] - TURRET_POS[i] for i in range(3)]
     expected_b = [world_pos_b[i] - TURRET_POS[i] for i in range(3)]
-    assert detections[0] == expected_a
-    assert detections[1] == expected_b
+
+    assert detections[0].track_id == 0
+    assert detections[0].position == expected_a
+    assert detections[1].track_id == 1
+    assert detections[1].position == expected_b
+
+
+def test_detections_are_detection_instances():
+    """get_detections() must return Detection NamedTuple instances (ADR-0006)."""
+    proj = StubProjectile([[1.0, 2.0, 3.0]])
+    radar = SearchRadar([proj], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
+    radar.update()
+    detections = radar.get_detections()
+    assert len(detections) == 1
+    assert isinstance(detections[0], Detection)
+
+
+def test_get_detections_returns_fresh_list():
+    """get_detections() must return a new list each call (callers cannot mutate state)."""
+    proj = StubProjectile([[1.0, 2.0, 3.0]])
+    radar = SearchRadar([proj], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
+    radar.update()
+    list_a = radar.get_detections()
+    list_b = radar.get_detections()
+    assert list_a is not list_b
