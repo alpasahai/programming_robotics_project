@@ -8,6 +8,7 @@ IMPORTABLE EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R20
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
 EXTERNPROTO "../protos/SimulatedProjectile.proto"
 EXTERNPROTO "../protos/AtlasTurret.proto"
+EXTERNPROTO "../protos/SearchRadar.proto"
 
 WorldInfo {
 }
@@ -26,4 +27,7 @@ TexturedBackgroundLight {
 DEF PROJECTILE SimulatedProjectile {
 }
 DEF TURRET_BASE AtlasTurret {
+}
+DEF SEARCH_RADAR SearchRadar {
+  translation 3 0 0
 }

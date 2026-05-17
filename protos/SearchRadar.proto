@@ -1,0 +1,51 @@
+#VRML_SIM R2025a utf8
+
+PROTO SearchRadar [
+  field SFVec3f translation 3 0 0
+  field SFString name "SEARCH_RADAR"
+] {
+  Robot {
+    translation IS translation
+    children [
+      Transform {
+        translation 0 0 1
+        rotation 1 0 0 1.5708
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 1 0.5 0
+              roughness 0.4
+              metalness 0.2
+            }
+            geometry Cylinder {
+              height 2
+              radius 0.05
+            }
+          }
+        ]
+      }
+      Transform {
+        translation 0 0 2.075
+        children [
+          Shape {
+            appearance PBRAppearance {
+              baseColor 0 1 1
+              emissiveColor 0 0.5 0.5
+              roughness 0.3
+              metalness 0.1
+            }
+            geometry Box {
+              size 0.4 0.1 0.15
+            }
+          }
+        ]
+      }
+    ]
+    name IS name
+    model "search_radar"
+    boundingObject Box {
+      size 0.4 0.4 2.15
+    }
+    controller "<none>"
+  }
+}
