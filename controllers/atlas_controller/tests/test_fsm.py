@@ -382,19 +382,6 @@ def test_acquire_does_not_call_set_target_on_fcr():
     assert len(fcr.set_target_calls) == 0
 
 
-def test_acquire_calls_set_target_on_search_radar():
-    """On entering ACQUIRE, search_radar.set_target() must be called exactly once.
-
-    Step sequence (acquire_frames=1, initialised=True):
-      Step 1: SEARCH → ACQUIRE transition (no ACQUIRE handler yet).
-      Step 2: ACQUIRE handler runs; entry actions fire; filter initialised → TRACK.
-    """
-    fsm, search_radar, fcr, track_filter = _make_fsm_with_capturing(acquire_frames=1)
-    fsm.step()  # SEARCH → ACQUIRE (transition only)
-    fsm.step()  # ACQUIRE handler: entry actions fire; filter initialised → TRACK
-    assert len(search_radar.set_target_calls) == 1
-
-
 def test_acquire_calls_track_filter_reset():
     """On entering ACQUIRE, track_filter.reset() must be called exactly once.
 

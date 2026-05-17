@@ -21,7 +21,7 @@ class Detection(NamedTuple):
                   (Z-up ENU). Updated each ``SearchRadar.update()`` call.
     """
     track_id: int
-    position: list
+    position: list[float]
 
 
 class SearchRadar:
@@ -148,6 +148,12 @@ class SearchRadar:
         Args:
             track_id: Integer index of the projectile to track, as returned
                       in ``Detection.track_id`` by ``get_detections()``.
+
+        Raises:
+            IndexError: If ``track_id`` is not a valid index into the
+                        projectile list passed at construction. Failing fast
+                        is intentional — callers must not pass a stale or
+                        out-of-bounds track_id.
         """
         self._target_node = self._projectiles[track_id]
         self._target_position = None

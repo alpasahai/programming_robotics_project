@@ -37,19 +37,19 @@ def test_set_target_clears_stored_target_position():
 
     Verifies that switching targets mid-flight does not leave a stale reading
     from the previous target visible to callers.
+
+    Scenario: one radar, two projectiles. Lock track_id=0, update() to populate
+    a position reading, then switch to track_id=1 — get_target_position() must
+    return None immediately (before the next update()).
     """
-    proj = StubProjectile([[3.0, 3.0, 3.0]])
-    radar = SearchRadar([proj], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
+    proj0 = StubProjectile([[3.0, 3.0, 3.0]])
+    proj1 = StubProjectile([[1.0, 1.0, 1.0]])
+    radar = SearchRadar([proj0, proj1], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
     radar.set_target(0)
     radar.update()
-    assert radar.get_target_position() == [3.0, 3.0, 3.0]
-
-    proj2 = StubProjectile([[1.0, 1.0, 1.0]])
-    radar2 = SearchRadar([proj, proj2], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
-    radar2.set_target(0)
-    radar2.update()
-    radar2.set_target(1)
-    assert radar2.get_target_position() is None
+    assert radar.get_target_position() == [3.0, 3.0, 3.0]  # baseline: target 0 is populated
+    radar.set_target(1)
+    assert radar.get_target_position() is None
 
 
 def test_set_target_filters_to_locked_node():

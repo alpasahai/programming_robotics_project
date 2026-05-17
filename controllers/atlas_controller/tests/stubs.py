@@ -46,6 +46,7 @@ class StubFCR:
         return list(self._position)
 
     def set_target(self, node):
+        """No-op. FCR accepts a Webots node (not a track_id) and is not called by the FSM — see ADR-0006."""
         pass
 
 
@@ -66,7 +67,6 @@ class StubSearchRadar:
             detections: list of Detection objects (from search_radar.Detection)
                         to return from get_detections().
         """
-        from search_radar import Detection  # local import avoids circular dep at module level
         self._detections = list(detections)
 
     def update(self):
