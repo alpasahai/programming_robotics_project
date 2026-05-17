@@ -1,16 +1,4 @@
-"""Tests for AtlasFSM — SEARCH and ACQUIRE states (Tasks 6).
-
-Covers:
-- Initial state is SEARCH
-- _do_search moves pan motor each step
-- Pan motor reverses direction at the limit
-- Consecutive detections count up; transition to ACQUIRE after acquire_frames
-- A no-detection frame resets the consecutive counter
-- ACQUIRE calls set_target on both sensors and track_filter.reset() exactly once
-- ACQUIRE transitions to TRACK when track_filter.is_initialised() returns True
-- _compute_aim_angles returns correct (pan, tilt) for known inputs
-- _target_in_range returns True/False for known positions
-"""
+"""Tests for AtlasFSM — finite state machine state handlers."""
 import math
 import pytest
 from stubs import StubFCR, StubSearchRadar, StubTrackFilter, StubMotor
@@ -594,7 +582,6 @@ def _make_fsm_in_track(
     config = FSMConfig(min_track_frames=min_track_frames)
     fsm = AtlasFSM(sensors, hardware, config)
     fsm.state = AtlasFSM.TRACK
-    fsm._track_frames = 0
     return fsm, pan_motor, tilt_motor
 
 
@@ -634,6 +621,28 @@ def test_track_increments_frame_counter_each_step():
         assert fsm._track_frames == expected
 
 
+def test_track_stays_in_track_before_min_frames():
+    """TRACK must remain in TRACK while frame count < min_track_frames."""
+    min_track_frames = 3
+    fsm, _, _ = _make_fsm_in_track(min_track_frames=min_track_frames)
+    for _ in range(min_track_frames - 1):
+        fsm.step()
+    assert fsm.state == AtlasFSM.TRACK
+
+
+def test_track_transitions_to_predict_at_min_frames():
+    """TRACK must transition to PREDICT on the step that reaches min_track_frames.
+
+    The transition fires when _track_frames reaches min_track_frames; the PREDICT
+    handler does NOT run on that same step (single-dispatch per step).
+    """
+    min_track_frames = 3
+    fsm, _, _ = _make_fsm_in_track(min_track_frames=min_track_frames)
+    for _ in range(min_track_frames):
+        fsm.step()
+    assert fsm.state == AtlasFSM.PREDICT
+
+
 # ---------------------------------------------------------------------------
 # _do_predict — helpers
 # ---------------------------------------------------------------------------
@@ -662,7 +671,8 @@ def _make_fsm_in_predict(intercept, max_range=10.0, ground_threshold=0.1):
         ground_threshold: FSMConfig.ground_threshold (metres).
 
     Returns:
-        (fsm, pan_motor, tilt_motor) tuple.
+        (fsm, pan_motor, tilt_motor) tuple. Motors are included for structural
+        symmetry with _make_fsm_in_track; PREDICT does not command them.
     """
     predictor = StubPredictor(intercept)
     track_filter = StubTrackFilter(position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0])
@@ -703,7 +713,7 @@ def test_predict_valid_intercept_stores_intercept():
     intercept = [0.0, 2.0, 1.0]
     fsm, _, _ = _make_fsm_in_predict(intercept=intercept)
     fsm.step()
-    assert fsm._intercept == pytest.approx(intercept)
+    assert fsm._intercept == intercept
 
 
 def test_predict_out_of_range_intercept_transitions_to_track():
@@ -728,23 +738,16 @@ def test_predict_below_ground_intercept_transitions_to_track():
     assert fsm.state == AtlasFSM.TRACK
 
 
-def test_track_stays_in_track_before_min_frames():
-    """TRACK must remain in TRACK while frame count < min_track_frames."""
-    min_track_frames = 3
-    fsm, _, _ = _make_fsm_in_track(min_track_frames=min_track_frames)
-    for _ in range(min_track_frames - 1):
-        fsm.step()
-    assert fsm.state == AtlasFSM.TRACK
+def test_predict_invalid_intercept_resets_track_bookkeeping():
+    """PREDICT→TRACK (invalid intercept) must reset _track_frames to 0 AND clear _intercept.
 
-
-def test_track_transitions_to_predict_at_min_frames():
-    """TRACK must transition to PREDICT on the step that reaches min_track_frames.
-
-    The transition fires when _track_frames reaches min_track_frames; the PREDICT
-    handler does NOT run on that same step (single-dispatch per step).
+    Guards the _track_frames reset (existing) and the _intercept clear (fix 1) so
+    that a PREDICT→TRACK transition never leaves stale intercept data for AIMING to see.
     """
-    min_track_frames = 3
-    fsm, _, _ = _make_fsm_in_track(min_track_frames=min_track_frames)
-    for _ in range(min_track_frames):
-        fsm.step()
-    assert fsm.state == AtlasFSM.PREDICT
+    # Seed a stale intercept to confirm it is cleared on re-entry to TRACK.
+    fsm, _, _ = _make_fsm_in_predict(intercept=[8.0, 8.0, 8.0], max_range=10.0)
+    fsm._intercept = [0.0, 2.0, 1.0]   # stale value from a previous PREDICT cycle
+    fsm.step()
+    assert fsm.state == AtlasFSM.TRACK
+    assert fsm._track_frames == 0
+    assert fsm._intercept is None

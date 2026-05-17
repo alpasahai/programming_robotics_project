@@ -315,3 +315,4 @@ class AtlasFSM:
             self._acquire_entry_done = False
         elif new_state == self.TRACK:
             self._track_frames = 0
+            self._intercept = None
