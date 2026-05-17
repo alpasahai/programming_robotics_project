@@ -18,10 +18,29 @@
 
 ## How to work this plan
 
+- **Execution mode: subagent-driven.** An Opus orchestrator dispatches one fresh subagent per task, reviews the result, then dispatches the next. Use the `superpowers:subagent-driven-development` sub-skill.
 - Each task is one reviewable unit. Within a task, follow red-green-refactor: write the failing test, confirm it fails for the expected reason, implement the minimum, confirm green, commit.
 - Run tests from `controllers/atlas_controller/`: `python -m pytest tests/ -v`. `conftest.py` puts both `tests/` and the controller dir on `sys.path`.
 - Webots controller glue and the world/proto files are not unit-tested (matches the project's existing pattern — the controller is documented as untested glue). They get explicit manual-verification steps in Webots instead.
 - Commit after every task with a conventional-commit message.
+
+### Model and effort policy
+
+Each task carries a **Model · Effort** tag for the subagent that executes it. Goal: cheapest model and lowest reasoning effort that will not degrade quality.
+
+**Model** — capability tier:
+- **haiku** — fully specified, mechanical, self-contained. Tests/interfaces are pinned by the plan; little judgment needed.
+- **sonnet** — moderate reasoning: rewriting a class under an interface-preservation constraint, non-trivial logic, Webots/proto syntax.
+- **opus** — judgment calls, cross-cutting changes, ambiguity. Also: **the orchestrator is always Opus**, and **every between-task review is done by Opus** regardless of the task's execution model.
+
+**Effort** — how much reasoning the subagent spends, set independently of model:
+- **low** — transcription-level: the plan dictates the code/content; follow it.
+- **medium** — the subagent must design small pieces of logic within a clear spec.
+- **high** — the subagent must reason through edge cases or cross-file effects. Rare in this plan.
+
+**Rules:**
+- **Tuning is never delegated to haiku.** Webots parameter tuning (FOV/scan/slew values until the FSM behaves) is iterative judgment — the orchestrator (Opus) or the human does it, even within a sonnet-tagged task.
+- If a subagent on a cheaper model or lower effort hits ambiguity or the task turns out under-specified, it should stop and escalate to the orchestrator rather than guess.
 
 ---
 
@@ -43,6 +62,8 @@
 
 ## Task 1 — Geometry helpers
 
+**Model: haiku · Effort: low** — pure functions, tests fully specified in the plan, no judgment.
+
 **Required:** Both radars need to reason about a target's direction relative to a sensor pose. There is no shared place for that today (the FSM inlines its own `atan2` math). Extract it once so both this plan and the FCR plan reuse it.
 
 **What to build:** A `geometry.py` module with two pure functions:
@@ -60,6 +81,8 @@
 ---
 
 ## Task 2 — SearchRadar gains a pose and FOV gate
+
+**Model: sonnet · Effort: medium** — class rewrite under a hard interface-preservation constraint (`Detection` output unchanged); needs care, not just transcription.
 
 **Required:** The radar must know its own world position and detect a projectile only when it is in range and within the vertical field of view — not omnisciently as today.
 
@@ -82,6 +105,8 @@
 
 ## Task 3 — Rotating scan beam
 
+**Model: haiku · Effort: low** — small, well-specified addition (advance an angle, gate on it).
+
 **Required:** Detection should depend on a sweeping beam, not cover all azimuths at once.
 
 **What to change:** `update()` advances an internal `_beam_azimuth` by `scan_rate` each call (wrapping at 2π). A projectile is gated in only when its azimuth (from `geometry`) lies within `beam_width/2` of `_beam_azimuth` (use `geometry.angle_diff`).
@@ -99,6 +124,8 @@
 
 ## Task 4 — Track buffer persistence
 
+**Model: sonnet · Effort: medium** — ageing/refresh/expiry logic with an off-by-one risk; moderate reasoning.
+
 **Required:** A rotating beam covers a target only intermittently. The FSM (`fsm.py:_do_search`) needs `acquire_frames` *consecutive* detections to leave `SEARCH`; flickering detections would reset that counter and the FSM would never transition. Real search radars hold a track between beam passes — model that.
 
 **What to change:** Replace the direct detection list with a track buffer keyed by `track_id`. Each `update()`: age every existing track by one; a detected target refreshes its entry to age 0; drop any track whose age exceeds `track_timeout`. `get_detections()` returns the current buffer; `get_target_position()` reads the locked track from it.
@@ -113,6 +140,8 @@
 ---
 
 ## Task 5 — SearchRadar PROTO and world instantiation
+
+**Model: sonnet · Effort: medium** — Webots PROTO/`.wbt` syntax; must match conventions #9 produced (inspect an existing proto first).
 
 **Required:** A physically visible radar in the scene. Per issue #9 the scene structures are PROTO files.
 
@@ -132,6 +161,8 @@
 
 ## Task 6 — Wire the SearchRadar model to the node
 
+**Model: sonnet · Effort: low** for the controller edit (small, mechanical). **The verification/tuning step is orchestrator (Opus, effort: medium) or human** — converging FOV/scan/`track_timeout`/placement until the FSM transitions is iterative judgment, not a haiku task.
+
 **Required:** The controller must give the `SearchRadar` model the real node pose and the FOV/scan parameters.
 
 **What to change in `controllers/atlas_controller/atlas_controller.py`:**
@@ -147,6 +178,8 @@
 ---
 
 ## Task 7 — Documentation
+
+**Model: haiku · Effort: low** — ADR/CONTEXT.md content is already drafted in this task; mechanical authoring.
 
 **Required:** Record the decision and fix the glossary contradiction issue #8 flagged.
 
