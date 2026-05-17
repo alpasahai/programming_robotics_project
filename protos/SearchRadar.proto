@@ -1,0 +1,70 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "RadarBar.proto"
+
+PROTO SearchRadar [
+  field SFVec3f translation 0 4 0
+  field SFString name "SEARCH_RADAR"
+  field SFString motorName "SEARCH_RADAR_MOTOR"
+] {
+  Robot {
+    translation IS translation
+    name IS name
+    model "search_radar"
+    controller "search_radar_controller"
+
+    children [
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0 0 1
+          anchor 0 0 1
+        }
+
+        device [
+          RotationalMotor {
+            name IS motorName
+            maxVelocity 10
+            maxTorque 10
+          }
+
+          PositionSensor {
+            name "SEARCH_RADAR_ANGLE"
+          }
+        ]
+
+        endPoint Solid {
+          translation 0 0 1
+
+          children [
+            RadarBar {
+              height 2
+              radius 0.05
+              color 1 0.5 0
+            }
+
+            Pose {
+              translation 0 0 1.1
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.1 0.1 1
+                    roughness 0.4
+                    metalness 0.2
+                  }
+
+                  geometry Box {
+                    size 0.5 0.25 0.25
+                  }
+                }
+              ]
+            }
+          ]
+
+          boundingObject Box {
+            size 0.7 0.7 2.4
+          }
+        }
+      }
+    ]
+  }
+}

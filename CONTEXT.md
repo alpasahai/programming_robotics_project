@@ -10,7 +10,7 @@ Planned future subsystem. Analyses patterns across multiple engagements to estim
 
 ## Search Radar
 
-Wide-beam acquisition radar external to ATLAS. Simulated using Webots world coordinates with added Gaussian noise to produce coarse, imprecise target cues. Not part of ATLAS — it represents a higher-level external system that cues the fire-control system. Not under test.
+Wide-beam acquisition radar external to ATLAS. Implemented as a dedicated Webots node with a world pose and a vertical-FOV gate. Features a rotating scan beam that sweeps azimuthally, making detections intermittent at the sensor level; a track buffer bridges beam sweeps by holding recent detections and dropping a track after `track_timeout` updates without re-detection. Simulated in-process inside the ATLAS controller with added Gaussian noise to produce coarse, imprecise target cues. Outputs are turret-relative (matching FSM and Track Filter expectations). A future increment will extract the radar model into a separate Webots controller with a radio link. See ADR-0007.
 
 ## Fire-Control Radar (FCR)
 

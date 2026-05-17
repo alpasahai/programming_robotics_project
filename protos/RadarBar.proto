@@ -1,0 +1,29 @@
+#VRML_SIM R2025a utf8
+
+PROTO RadarBar [
+  field SFColor color 1 0.5 0
+  field SFFloat height 2
+  field SFFloat radius 0.05
+] {
+  Solid {
+    children [
+      Shape {
+        appearance PBRAppearance {
+          baseColor IS color
+          roughness 0.4
+          metalness 0.2
+        }
+        geometry Cylinder {
+          height IS height
+          radius IS radius
+        }
+      }
+    ]
+
+    boundingObject Cylinder {
+      height IS height
+      radius IS radius
+    }
+
+  }
+}
