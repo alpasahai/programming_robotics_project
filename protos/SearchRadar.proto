@@ -1,57 +1,70 @@
 #VRML_SIM R2025a utf8
 
+EXTERNPROTO "RadarBar.proto"
+
 PROTO SearchRadar [
-  field SFVec3f translation 3 0 0
+  field SFVec3f translation 0 4 0
   field SFString name "SEARCH_RADAR"
+  field SFString motorName "SEARCH_RADAR_MOTOR"
 ] {
   Robot {
     translation IS translation
-    children [
-      Pose {
-        translation 0 0 1
-        rotation 1 0 0 1.5708
-        children [
-          Shape {
-            appearance PBRAppearance {
-              baseColor 1 0.5 0
-              roughness 0.4
-              metalness 0.2
-            }
-            geometry Cylinder {
-              height 2
-              radius 0.05
-            }
-          }
-        ]
-      }
-      Pose {
-        translation 0 0 2.075
-        children [
-          Shape {
-            appearance PBRAppearance {
-              baseColor 0 1 1
-              emissiveColor 0 0.5 0.5
-              roughness 0.3
-              metalness 0.1
-            }
-            geometry Box {
-              size 0.4 0.1 0.15
-            }
-          }
-        ]
-      }
-    ]
     name IS name
     model "search_radar"
-    boundingObject Pose {
-      translation 0 0 1.1
-      children [
-        Box {
-          size 0.5 0.5 2.2
-        }
-      ]
-    }
-    # TODO: promote to a field when the radar gets its own controller in a future increment
     controller "<none>"
+
+    children [
+      HingeJoint {
+        jointParameters HingeJointParameters {
+          axis 0 0 1
+          anchor 0 0 1
+        }
+
+        device [
+          RotationalMotor {
+            name IS motorName
+            maxVelocity 10
+            maxTorque 10
+          }
+
+          PositionSensor {
+            name "SEARCH_RADAR_ANGLE"
+          }
+        ]
+
+        endPoint Solid {
+          translation 0 0 1
+
+          children [
+            RadarBar {
+              height 2
+              radius 0.05
+              color 1 0.5 0
+            }
+
+            Pose {
+              translation 0 0 1.1
+              children [
+                Shape {
+                  appearance PBRAppearance {
+                    baseColor 0.1 0.1 1
+                    roughness 0.4
+                    metalness 0.2
+                  }
+
+                  geometry Box {
+                    size 0.5 0.25 0.25
+                  }
+                }
+              ]
+            }
+          ]
+
+          boundingObject Box {
+            size 0.7 0.7 2.4
+          }
+        }
+      }
+    ]
   }
 }

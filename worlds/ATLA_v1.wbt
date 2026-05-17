@@ -29,4 +29,5 @@ DEF PROJECTILE SimulatedProjectile {
 DEF TURRET_BASE AtlasTurret {
 }
 DEF SEARCH_RADAR SearchRadar {
+  translation 0 4 0
 }
