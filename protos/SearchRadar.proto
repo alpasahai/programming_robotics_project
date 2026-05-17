@@ -7,7 +7,7 @@ PROTO SearchRadar [
   Robot {
     translation IS translation
     children [
-      Transform {
+      Pose {
         translation 0 0 1
         rotation 1 0 0 1.5708
         children [
@@ -24,7 +24,7 @@ PROTO SearchRadar [
           }
         ]
       }
-      Transform {
+      Pose {
         translation 0 0 2.075
         children [
           Shape {
@@ -44,13 +44,14 @@ PROTO SearchRadar [
     name IS name
     model "search_radar"
     boundingObject Pose {
-      translation 0 0 1.075
+      translation 0 0 1.1
       children [
         Box {
-          size 0.4 0.4 2.15
+          size 0.5 0.5 2.2
         }
       ]
     }
+    # TODO: promote to a field when the radar gets its own controller in a future increment
     controller "<none>"
   }
 }
