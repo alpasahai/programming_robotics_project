@@ -1,4 +1,5 @@
 """Tests for SearchRadar — ATLAS's wide-beam external acquisition sensor."""
+import math
 import random
 
 from stubs import StubProjectile
@@ -16,6 +17,13 @@ def test_get_detections_returns_empty_list_before_update():
     assert radar.get_detections() == []
 
 
+def test_get_target_position_returns_none_in_initial_state():
+    """get_target_position() must return None before any update() or set_target()."""
+    proj = StubProjectile([[5.0, 6.0, 7.0]])
+    radar = SearchRadar([proj], TURRET_POS, noise_std=0.0, timestep_ms=TIMESTEP_MS)
+    assert radar.get_target_position() is None
+
+
 def test_get_target_position_returns_none_before_set_target():
     """get_target_position() must return None until set_target() is called."""
     proj = StubProjectile([[5.0, 6.0, 7.0]])
@@ -30,11 +38,11 @@ def test_set_target_clears_stored_target_position():
     Verifies that switching targets mid-flight does not leave a stale reading
     from the previous target visible to callers.
     """
-    proj = StubProjectile([[3.0, 3.0, 3.0], [3.0, 3.0, 3.0]])
+    proj = StubProjectile([[3.0, 3.0, 3.0]])
     radar = SearchRadar([proj], [0.0, 0.0, 0.0], noise_std=0.0, timestep_ms=TIMESTEP_MS)
     radar.set_target(proj)
     radar.update()
-    assert radar.get_target_position() is not None
+    assert radar.get_target_position() == [3.0, 3.0, 3.0]
 
     new_node = StubProjectile([[1.0, 1.0, 1.0]])
     radar.set_target(new_node)
@@ -79,7 +87,7 @@ def test_update_with_nonzero_noise_perturbs_readings():
         deviations.extend(detections[0])
 
     mean_abs = sum(abs(d) for d in deviations) / len(deviations)
-    expected_mean_abs = noise_std * (2 / 3.14159265358979) ** 0.5
+    expected_mean_abs = noise_std * (2 / math.pi) ** 0.5
     # Allow generous ±30% tolerance given sampling variance
     assert 0.7 * expected_mean_abs < mean_abs < 1.3 * expected_mean_abs
 

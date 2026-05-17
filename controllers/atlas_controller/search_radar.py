@@ -39,7 +39,7 @@ class SearchRadar:
                              fresh ``random.Random()`` is created.
         """
         self._projectiles = projectiles
-        self._turret_position = turret_position
+        self._turret_position = list(turret_position)
         self._noise_std = noise_std
         self._timestep_ms = timestep_ms
         self._rng = rng if rng is not None else random.Random()
@@ -77,7 +77,7 @@ class SearchRadar:
         one to lock onto. Returns an empty list before the first ``update()``
         or when no projectiles are present.
         """
-        return self._detections
+        return list(self._detections)
 
     def get_target_position(self) -> list[float] | None:
         """Return noisy relative position of the locked target [dx, dy, dz].
