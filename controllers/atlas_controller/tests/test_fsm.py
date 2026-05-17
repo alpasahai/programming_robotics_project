@@ -751,3 +751,365 @@ def test_predict_invalid_intercept_resets_track_bookkeeping():
     assert fsm.state == AtlasFSM.TRACK
     assert fsm._track_frames == 0
     assert fsm._intercept is None
+
+
+# ---------------------------------------------------------------------------
+# _do_aim — helpers
+# ---------------------------------------------------------------------------
+
+def _make_fsm_in_aiming(
+    intercept=None,
+    aim_error_threshold=0.05,
+    track_position=None,
+):
+    """Build an AtlasFSM already in AIMING state with a fixed intercept.
+
+    The FSM state is set directly (no stepping through earlier states) to keep
+    AIMING tests fast and isolated. The intercept is placed on self._intercept.
+    The last-commanded motor angles (_commanded_pan, _commanded_tilt) are left
+    at the post-__init__ default (0.0, 0.0) so the first step always has a
+    non-zero error unless the intercept happens to be dead-ahead.
+
+    Args:
+        intercept:           Relative [dx, dy, dz] stored as self._intercept.
+                             Defaults to [1.0, 2.0, 1.0].
+        aim_error_threshold: FSMConfig.aim_error_threshold (radians).
+        track_position:      Position StubTrackFilter returns (for ENGAGING tests
+                             that reuse this helper). Defaults to [1.0, 2.0, 1.0].
+
+    Returns:
+        (fsm, pan_motor, tilt_motor) tuple.
+    """
+    if intercept is None:
+        intercept = [1.0, 2.0, 1.0]
+    if track_position is None:
+        track_position = [1.0, 2.0, 1.0]
+
+    track_filter = StubTrackFilter(position=track_position, velocity=[0.0, 0.0, 0.0])
+    pan_motor = StubMotor()
+    tilt_motor = StubMotor()
+    sensors = SensorSuite(
+        search_radar=StubSearchRadar([]),
+        fcr=StubFCR(position=[1.0, 1.0, 1.0]),
+        track_filter=track_filter,
+        ballistic_predictor=None,
+    )
+    hardware = TurretHardware(
+        pan_motor=pan_motor,
+        tilt_motor=tilt_motor,
+        turret_position=TURRET_POS,
+        timestep_ms=32,
+    )
+    config = FSMConfig(aim_error_threshold=aim_error_threshold)
+    fsm = AtlasFSM(sensors, hardware, config)
+    fsm.state = AtlasFSM.AIMING
+    fsm._intercept = list(intercept)
+    return fsm, pan_motor, tilt_motor
+
+
+# ---------------------------------------------------------------------------
+# _do_aim — motor commands
+# ---------------------------------------------------------------------------
+
+def test_aim_commands_pan_motor_at_intercept():
+    """AIMING must command the pan motor to the pan angle for the intercept.
+
+    Intercept [1.0, 2.0, 1.0] → pan = atan2(1.0, 2.0).
+    """
+    intercept = [1.0, 2.0, 1.0]
+    fsm, pan, _ = _make_fsm_in_aiming(intercept=intercept)
+    fsm.step()
+    expected_pan = math.atan2(intercept[0], intercept[1])
+    assert pan.position == pytest.approx(expected_pan)
+
+
+def test_aim_commands_tilt_motor_at_intercept():
+    """AIMING must command the tilt motor to the tilt angle for the intercept.
+
+    Intercept [1.0, 2.0, 1.0] → tilt = atan2(1.0, sqrt(1.0² + 2.0²)).
+    """
+    intercept = [1.0, 2.0, 1.0]
+    fsm, _, tilt = _make_fsm_in_aiming(intercept=intercept)
+    fsm.step()
+    expected_tilt = math.atan2(intercept[2], math.sqrt(intercept[0]**2 + intercept[1]**2))
+    assert tilt.position == pytest.approx(expected_tilt)
+
+
+# ---------------------------------------------------------------------------
+# _do_aim — convergence and AIMING→ENGAGING transition
+# ---------------------------------------------------------------------------
+
+def test_aim_stays_in_aiming_before_convergence():
+    """AIMING must remain in AIMING on the first step (aim error is nonzero on entry).
+
+    The FSM starts with _commanded_pan = _commanded_tilt = 0.0. On the first step
+    it commands the intercept angles and records them. The aim error is only
+    measured AFTER commanding, so convergence is NOT declared until the NEXT step
+    when the error will be zero (desired == commanded). Hence the first step stays
+    in AIMING.
+
+    Intercept [1.0, 2.0, 1.0] → nonzero pan, so initial error is nonzero.
+    """
+    intercept = [1.0, 2.0, 1.0]
+    fsm, _, _ = _make_fsm_in_aiming(
+        intercept=intercept,
+        aim_error_threshold=0.05,
+    )
+    fsm.step()  # commands motors; error measured vs prior commanded → nonzero → stays
+    assert fsm.state == AtlasFSM.AIMING
+
+
+def test_aim_transitions_to_engaging_after_convergence():
+    """AIMING must transition to ENGAGING once aim error falls below threshold.
+
+    On the second AIMING step the commanded angles equal the desired angles
+    (error == 0), which is below any positive threshold → transition fires.
+    """
+    intercept = [1.0, 2.0, 1.0]
+    fsm, _, _ = _make_fsm_in_aiming(
+        intercept=intercept,
+        aim_error_threshold=0.05,
+    )
+    fsm.step()  # step 1: commands motors, error nonzero → stays in AIMING
+    fsm.step()  # step 2: error == 0 < threshold → transitions to ENGAGING
+    assert fsm.state == AtlasFSM.ENGAGING
+
+
+def test_aim_already_aligned_transitions_immediately():
+    """AIMING with a very large threshold must transition to ENGAGING on the first step.
+
+    With aim_error_threshold=10.0 (>> any realistic angular error) the first-step
+    error is below the threshold even before the motors have slewed, so AIMING
+    transitions to ENGAGING immediately.
+    """
+    # The initial commanded angles are (0.0, 0.0). The intercept angles for
+    # [1.0, 2.0, 1.0] are (atan2(1,2) ≈ 0.46, atan2(1, sqrt(5)) ≈ 0.42), giving
+    # an error of ~0.63 rad — well below threshold=10.0.
+    intercept = [1.0, 2.0, 1.0]
+    fsm, _, _ = _make_fsm_in_aiming(
+        intercept=intercept,
+        aim_error_threshold=10.0,
+    )
+    fsm.step()
+    assert fsm.state == AtlasFSM.ENGAGING
+
+
+# ---------------------------------------------------------------------------
+# _do_engage — helpers
+# ---------------------------------------------------------------------------
+
+def _make_fsm_in_engaging(
+    intercept=None,
+    track_position=None,
+    max_range=10.0,
+    ground_threshold=0.1,
+):
+    """Build an AtlasFSM already in ENGAGING state.
+
+    Reuses _make_fsm_in_aiming internals and then advances to ENGAGING.
+
+    Args:
+        intercept:        Relative [dx, dy, dz] stored as self._intercept.
+                          Defaults to [1.0, 2.0, 1.0] (in-range, above-ground).
+        track_position:   Position that StubTrackFilter.get_position() returns.
+                          Defaults to match the intercept (target still in range).
+        max_range:        FSMConfig.max_range (metres).
+        ground_threshold: FSMConfig.ground_threshold (metres).
+
+    Returns:
+        (fsm, pan_motor, tilt_motor) tuple.
+    """
+    if intercept is None:
+        intercept = [1.0, 2.0, 1.0]
+    if track_position is None:
+        track_position = list(intercept)
+
+    track_filter = StubTrackFilter(position=track_position, velocity=[0.0, 0.0, 0.0])
+    pan_motor = StubMotor()
+    tilt_motor = StubMotor()
+    sensors = SensorSuite(
+        search_radar=StubSearchRadar([]),
+        fcr=StubFCR(position=[1.0, 1.0, 1.0]),
+        track_filter=track_filter,
+        ballistic_predictor=None,
+    )
+    hardware = TurretHardware(
+        pan_motor=pan_motor,
+        tilt_motor=tilt_motor,
+        turret_position=TURRET_POS,
+        timestep_ms=32,
+    )
+    config = FSMConfig(max_range=max_range, ground_threshold=ground_threshold)
+    fsm = AtlasFSM(sensors, hardware, config)
+    fsm.state = AtlasFSM.ENGAGING
+    fsm._intercept = list(intercept)
+    return fsm, pan_motor, tilt_motor
+
+
+# ---------------------------------------------------------------------------
+# _do_engage — laser and motor behaviour
+# ---------------------------------------------------------------------------
+
+def test_engage_sets_laser_active_true():
+    """ENGAGING must set self.laser_active = True on every step."""
+    fsm, _, _ = _make_fsm_in_engaging()
+    assert fsm.laser_active is False   # pre-condition: starts False
+    fsm.step()
+    assert fsm.laser_active is True
+
+
+def test_engage_holds_aim_at_intercept_pan():
+    """ENGAGING must keep commanding the pan motor at the intercept pan angle."""
+    intercept = [1.0, 2.0, 1.0]
+    fsm, pan, _ = _make_fsm_in_engaging(intercept=intercept)
+    fsm.step()
+    expected_pan = math.atan2(intercept[0], intercept[1])
+    assert pan.position == pytest.approx(expected_pan)
+
+
+def test_engage_holds_aim_at_intercept_tilt():
+    """ENGAGING must keep commanding the tilt motor at the intercept tilt angle."""
+    intercept = [1.0, 2.0, 1.0]
+    fsm, _, tilt = _make_fsm_in_engaging(intercept=intercept)
+    fsm.step()
+    expected_tilt = math.atan2(intercept[2], math.sqrt(intercept[0]**2 + intercept[1]**2))
+    assert tilt.position == pytest.approx(expected_tilt)
+
+
+def test_engage_stays_in_engaging_while_target_in_range():
+    """ENGAGING must remain in ENGAGING while the target is within range and above ground."""
+    # track_position in range (distance=sqrt(3)≈1.73 < 10.0, dz=1.0 > 0.1)
+    fsm, _, _ = _make_fsm_in_engaging(track_position=[1.0, 1.0, 1.0])
+    fsm.step()
+    assert fsm.state == AtlasFSM.ENGAGING
+
+
+def test_engage_transitions_to_reset_when_target_out_of_range():
+    """ENGAGING must transition to RESET when the target goes out of range.
+
+    Track position [9.0, 9.0, 9.0]: distance ≈ 15.6 > max_range=10.0 → out of range.
+    """
+    fsm, _, _ = _make_fsm_in_engaging(track_position=[9.0, 9.0, 9.0], max_range=10.0)
+    fsm.step()
+    assert fsm.state == AtlasFSM.RESET
+
+
+def test_engage_transitions_to_reset_when_target_hits_ground():
+    """ENGAGING must transition to RESET when the target hits the ground.
+
+    Track position dz=0.0 ≤ ground_threshold=0.1 → target has landed.
+    """
+    fsm, _, _ = _make_fsm_in_engaging(
+        track_position=[1.0, 1.0, 0.0],
+        ground_threshold=0.1,
+    )
+    fsm.step()
+    assert fsm.state == AtlasFSM.RESET
+
+
+# ---------------------------------------------------------------------------
+# _do_reset — state clearing and RESET→SEARCH transition
+# ---------------------------------------------------------------------------
+
+def _make_fsm_in_reset(intercept=None):
+    """Build an AtlasFSM in RESET state with engagement bookkeeping populated.
+
+    Sets laser_active=True, _intercept, _track_frames, _detection_count, and
+    _target to non-default values so the test can verify RESET clears them all.
+
+    Args:
+        intercept: Relative [dx, dy, dz] pre-loaded into self._intercept.
+                   Defaults to [1.0, 2.0, 1.0].
+
+    Returns:
+        (fsm, pan_motor, tilt_motor) tuple.
+    """
+    if intercept is None:
+        intercept = [1.0, 2.0, 1.0]
+
+    track_filter = StubTrackFilter(position=[1.0, 2.0, 1.0], velocity=[0.0, 0.0, 0.0])
+    pan_motor = StubMotor()
+    tilt_motor = StubMotor()
+    sensors = SensorSuite(
+        search_radar=StubSearchRadar([]),
+        fcr=StubFCR(position=[1.0, 1.0, 1.0]),
+        track_filter=track_filter,
+        ballistic_predictor=None,
+    )
+    hardware = TurretHardware(
+        pan_motor=pan_motor,
+        tilt_motor=tilt_motor,
+        turret_position=TURRET_POS,
+        timestep_ms=32,
+    )
+    config = FSMConfig()
+    fsm = AtlasFSM(sensors, hardware, config)
+
+    # Populate all bookkeeping that RESET must clear
+    fsm.state = AtlasFSM.RESET
+    fsm.laser_active = True
+    fsm._intercept = list(intercept)
+    fsm._track_frames = 7
+    fsm._detection_count = 5
+    fsm._target = [1.0, 2.0, 0.5]
+    fsm._acquire_entry_done = True
+
+    return fsm, pan_motor, tilt_motor
+
+
+def test_reset_transitions_to_search():
+    """RESET must transition to SEARCH on its first (and only) step."""
+    fsm, _, _ = _make_fsm_in_reset()
+    fsm.step()
+    assert fsm.state == AtlasFSM.SEARCH
+
+
+def test_reset_clears_laser_active():
+    """RESET must set laser_active to False before transitioning to SEARCH."""
+    fsm, _, _ = _make_fsm_in_reset()
+    fsm.step()
+    assert fsm.laser_active is False
+
+
+def test_reset_clears_intercept():
+    """RESET must set _intercept to None."""
+    fsm, _, _ = _make_fsm_in_reset()
+    fsm.step()
+    assert fsm._intercept is None
+
+
+def test_reset_clears_target():
+    """RESET must set _target to None."""
+    fsm, _, _ = _make_fsm_in_reset()
+    fsm.step()
+    assert fsm._target is None
+
+
+def test_reset_clears_acquire_entry_done():
+    """RESET must set _acquire_entry_done to False so re-entry actions fire on next ACQUIRE."""
+    fsm, _, _ = _make_fsm_in_reset()
+    fsm.step()
+    assert fsm._acquire_entry_done is False
+
+
+def test_reset_detection_count_is_zero_after_reset():
+    """_detection_count must be 0 after RESET→SEARCH (reset on SEARCH entry via _transition)."""
+    fsm, _, _ = _make_fsm_in_reset()
+    fsm.step()
+    assert fsm._detection_count == 0
+
+
+def test_reset_track_frames_is_zero_after_reset():
+    """_track_frames must be 0 after RESET (reset on TRACK entry via _transition)."""
+    fsm, _, _ = _make_fsm_in_reset()
+    # _track_frames is reset when entering TRACK, not SEARCH; verify it is reset
+    # on the RESET handler itself (not deferred to _transition) so that after
+    # RESET→SEARCH the counter is clean for the next TRACK engagement.
+    fsm.step()
+    assert fsm._track_frames == 0
+
+
+def test_laser_active_is_false_on_init():
+    """laser_active must be False on FSM construction (before any ENGAGING step)."""
+    fsm, _, _ = _make_fsm()
+    assert fsm.laser_active is False

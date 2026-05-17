@@ -118,6 +118,11 @@ class AtlasFSM:
         # PREDICT bookkeeping
         self._intercept = None          # validated intercept point for AIMING
 
+        # AIMING / ENGAGING bookkeeping
+        self._commanded_pan = 0.0       # last pan angle sent to the pan motor (radians)
+        self._commanded_tilt = 0.0      # last tilt angle sent to the tilt motor (radians)
+        self.laser_active = False       # True while ENGAGING; read by the controller
+
     def step(self) -> None:
         """Advance FSM by one timestep.
 
@@ -248,16 +253,112 @@ class AtlasFSM:
             self._transition(self.TRACK)
 
     def _do_aim(self) -> None:
-        """Execute one timestep of AIMING state logic. (Task 8 — not yet implemented.)"""
-        raise NotImplementedError
+        """Execute one timestep of AIMING state logic.
+
+        Slews both motors toward the stored intercept point (self._intercept, relative
+        [dx, dy, dz] from the turret origin, set by PREDICT). The aim error is measured
+        as the Euclidean angular distance between the desired angles (from the intercept)
+        and the angles most-recently commanded to the motors (_commanded_pan,
+        _commanded_tilt). The error is evaluated BEFORE issuing new commands so that
+        the first AIMING step — where the motors are still at whatever TRACK left them —
+        has a nonzero error and the FSM stays in AIMING. After the motors are commanded
+        the stored commanded angles are updated; on the next step the error is zero
+        (desired == newly commanded), which is below any positive threshold, and the FSM
+        transitions to ENGAGING.
+
+        Aim-error design rationale
+        --------------------------
+        Webots RotationalMotor has no position readback without an attached
+        PositionSensor. Adding a sensor purely for AIMING would leak hardware
+        concerns into tests and complicate the controller. Instead, the FSM tracks
+        the last angle it sent to each motor (_commanded_pan, _commanded_tilt). This
+        is an internally-consistent measure of "how far the turret still needs to
+        slew" — it is zero the step after the desired angles are first commanded,
+        which is the earliest the motors could realistically be pointing at the
+        target. This is a deliberate simplification: the real mechanical slew
+        latency is ignored, which is acceptable for the scope of Task 8. A concern
+        is noted: if the simulation timestep is large relative to the motor slew
+        speed, this may fire ENGAGING prematurely. Consider adding a configurable
+        dwell count in a future task if needed.
+
+        Transitions to ENGAGING when aim error < config.aim_error_threshold (radians).
+
+        Precondition: self._intercept is not None (set by PREDICT before entering AIMING).
+        """
+        desired_pan, desired_tilt = self._compute_aim_angles(self._intercept)
+
+        # Measure error against PREVIOUS commanded angles (before this step's command)
+        error = math.sqrt(
+            (desired_pan - self._commanded_pan) ** 2
+            + (desired_tilt - self._commanded_tilt) ** 2
+        )
+
+        # Command motors and record what we sent
+        self.hardware.pan_motor.setPosition(desired_pan)
+        self.hardware.tilt_motor.setPosition(desired_tilt)
+        self._commanded_pan = desired_pan
+        self._commanded_tilt = desired_tilt
+
+        if error < self.config.aim_error_threshold:
+            self._transition(self.ENGAGING)
 
     def _do_engage(self) -> None:
-        """Execute one timestep of ENGAGING state logic. (Task 8 — not yet implemented.)"""
-        raise NotImplementedError
+        """Execute one timestep of ENGAGING state logic.
+
+        Activates the laser (self.laser_active = True) and holds aim on the stored
+        intercept point by re-commanding both motors each step. Reads the current
+        target position from sensors.track_filter.get_position() and checks whether
+        the target is still within engagement range via _target_in_range(). When the
+        target goes out of range (beyond max_range or at/below ground_threshold),
+        transitions to RESET.
+
+        self.laser_active is readable by the controller (Task 9) to drive the
+        actual laser hardware.
+
+        Precondition: self._intercept is not None (set by PREDICT, unchanged since AIMING).
+        """
+        self.laser_active = True
+
+        # Hold aim on the fixed intercept
+        pan, tilt = self._compute_aim_angles(self._intercept)
+        self.hardware.pan_motor.setPosition(pan)
+        self.hardware.tilt_motor.setPosition(tilt)
+        self._commanded_pan = pan
+        self._commanded_tilt = tilt
+
+        # Monitor live target position; exit when target leaves the engagement envelope
+        target_position = self.sensors.track_filter.get_position()
+        if not self._target_in_range(target_position):
+            self._transition(self.RESET)
 
     def _do_reset(self) -> None:
-        """Execute one timestep of RESET state logic. (Task 8 — not yet implemented.)"""
-        raise NotImplementedError
+        """Execute one timestep of RESET state logic.
+
+        Clears all engagement and tracking bookkeeping accumulated since SEARCH,
+        then transitions to SEARCH so the turret begins a fresh scan cycle.
+
+        What this handler clears explicitly (not covered by _transition(SEARCH)):
+          - laser_active       → False  (engagement flag)
+          - _target            → None   (selected detection node)
+          - _intercept         → None   (PREDICT output; normally cleared on TRACK
+                                         entry by _transition, but cleared here too
+                                         for clarity since RESET always bypasses TRACK)
+          - _track_frames      → 0      (_transition(SEARCH) does not reset this;
+                                         it is reset by _transition(TRACK), which is
+                                         not visited during a RESET→SEARCH path)
+          - _acquire_entry_done → False (_transition(ACQUIRE) would reset this, but
+                                         RESET→SEARCH skips ACQUIRE, so the guard must
+                                         be explicitly cleared here for the next cycle)
+
+        _transition(SEARCH) covers: _detection_count, _pan_direction, _pan_angle.
+        No logic is duplicated between this handler and _transition().
+        """
+        self.laser_active = False
+        self._target = None
+        self._intercept = None
+        self._track_frames = 0
+        self._acquire_entry_done = False
+        self._transition(self.SEARCH)
 
     # ---------------------------------------------------------------- helpers
 
