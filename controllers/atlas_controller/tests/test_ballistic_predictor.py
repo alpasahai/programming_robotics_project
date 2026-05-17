@@ -11,6 +11,7 @@ Verifies:
 import pytest
 from stubs import StubTrackFilter
 from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
+from fsm import FSMConfig
 
 GRAVITY = 9.81  # m/s²
 
@@ -176,3 +177,35 @@ def test_get_intercept_returns_list_of_3_floats():
     assert isinstance(result, list)
     assert len(result) == 3
     assert all(isinstance(v, float) for v in result)
+
+
+# ---------------------------------------------------------------------------
+# Regression: default lookahead must not predict past the projectile's landing
+#
+# A Webots run showed the FSM stuck oscillating PREDICT <-> TRACK: every
+# intercept was below ground, so _do_predict() always bounced back to TRACK.
+# Root cause — lookahead_steps=20 at a 32 ms timestep is T=0.64 s, and the
+# gravity drop 0.5*g*T^2 ~= 2.0 m exceeds the ATLAS projectile's ~1.6 m apex,
+# so the predicted point lands underground for any descending projectile.
+#
+# This pins FSMConfig.lookahead_steps to a value that keeps the intercept
+# airborne for a representative mid-flight state observed in Webots.
+# ---------------------------------------------------------------------------
+
+def test_default_lookahead_keeps_intercept_above_ground():
+    """Default-config intercept stays above ground for a real ATLAS trajectory.
+
+    Uses the turret-relative filter state observed at the first PREDICT step in
+    Webots (projectile descending from apex) and the 32 ms basic timestep. With
+    the default lookahead the intercept Z must clear ground_threshold so the FSM
+    can progress PREDICT -> AIMING instead of looping back to TRACK.
+    """
+    config = FSMConfig()
+    # Representative first-PREDICT state from the Webots diagnostic run.
+    pos = [0.8, -0.07, 1.61]
+    vel = [0.0, 3.7, -0.87]
+    predictor = make_predictor(pos, vel, timestep_ms=32)
+
+    intercept = predictor.get_intercept(config.lookahead_steps)
+
+    assert intercept[2] > config.ground_threshold
