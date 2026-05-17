@@ -33,8 +33,9 @@ class SearchRadar:
     Reads true projectile positions via Webots Supervisor getPosition() and
     adds high Gaussian noise to simulate coarse wide-beam acquisition cues.
 
-    Holds the ``track_id → Webots node`` mapping internally. Nothing outside
-    this class holds a node handle (ADR-0006: sensor membrane).
+    Holds the projectile list (indexed by ``track_id``) and a ``track_id``-keyed
+    track buffer of ``(Detection, age)`` tuples internally. Nothing outside
+    this class holds a Webots node handle (ADR-0006: sensor membrane).
 
     During SEARCH: get_detections() returns Detection objects so the FSM can
     select a target by track_id.
