@@ -843,10 +843,11 @@ def test_aim_stays_in_aiming_before_convergence():
     """AIMING must remain in AIMING on the first step (aim error is nonzero on entry).
 
     The FSM starts with _commanded_pan = _commanded_tilt = 0.0. On the first step
-    it commands the intercept angles and records them. The aim error is only
-    measured AFTER commanding, so convergence is NOT declared until the NEXT step
-    when the error will be zero (desired == commanded). Hence the first step stays
-    in AIMING.
+    the aim error is measured BEFORE commanding the motors (against the previous
+    commanded angles, which are 0.0), so the error is nonzero. The motors are then
+    commanded to the intercept angles and those angles are recorded. On the NEXT step
+    the error will be zero (desired == newly commanded) and the FSM transitions to
+    ENGAGING. Hence the first step stays in AIMING.
 
     Intercept [1.0, 2.0, 1.0] → nonzero pan, so initial error is nonzero.
     """

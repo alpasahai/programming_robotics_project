@@ -39,7 +39,14 @@ class FSMConfig:
     ground_threshold:    float = 0.1    # metres world-Z — below this → landed
     acquire_frames:      int   = 3      # consecutive detections to leave SEARCH
     min_track_frames:    int   = 15     # TrackFilter frames before PREDICT
-    aim_error_threshold: float = 0.05   # radians — convergence for ENGAGING
+    aim_error_threshold: float = 0.05   # radians — guards the AIMING→ENGAGING transition.
+                                         # _do_aim measures the angular offset between the desired
+                                         # intercept angles and the FSM's own last-commanded angles;
+                                         # since the intercept is static (fixed by PREDICT), this
+                                         # reaches zero within ~2 steps regardless of the threshold.
+                                         # A true mechanical-convergence check would require a Webots
+                                         # PositionSensor (not currently fitted). See _do_aim for the
+                                         # full rationale.
     search_speed:        float = 0.02   # radians per step during pan sweep
     search_pan_limit:    float = 1.4    # radians (~80°) sweep extent
     lookahead_steps:     int   = 20     # timesteps ahead for intercept
@@ -223,9 +230,7 @@ class AtlasFSM:
         Motor angles are computed via _compute_aim_angles().
         """
         position = self.sensors.track_filter.get_position()
-        pan, tilt = self._compute_aim_angles(position)
-        self.hardware.pan_motor.setPosition(pan)
-        self.hardware.tilt_motor.setPosition(tilt)
+        self._aim_at(position)
 
         self._track_frames += 1
         if self._track_frames >= self.config.min_track_frames:
@@ -294,8 +299,7 @@ class AtlasFSM:
         )
 
         # Command motors and record what we sent
-        self.hardware.pan_motor.setPosition(desired_pan)
-        self.hardware.tilt_motor.setPosition(desired_tilt)
+        self._aim_at(self._intercept)
         self._commanded_pan = desired_pan
         self._commanded_tilt = desired_tilt
 
@@ -320,11 +324,7 @@ class AtlasFSM:
         self.laser_active = True
 
         # Hold aim on the fixed intercept
-        pan, tilt = self._compute_aim_angles(self._intercept)
-        self.hardware.pan_motor.setPosition(pan)
-        self.hardware.tilt_motor.setPosition(tilt)
-        self._commanded_pan = pan
-        self._commanded_tilt = tilt
+        self._aim_at(self._intercept)
 
         # Monitor live target position; exit when target leaves the engagement envelope
         target_position = self.sensors.track_filter.get_position()
@@ -361,6 +361,24 @@ class AtlasFSM:
         self._transition(self.SEARCH)
 
     # ---------------------------------------------------------------- helpers
+
+    def _aim_at(self, rel_position: list[float]) -> tuple[float, float]:
+        """Command both motors to point at a relative position and return the angles.
+
+        Computes pan/tilt angles via _compute_aim_angles() and issues setPosition()
+        to both motors in one atomic call, ensuring neither motor is ever commanded
+        without the other.
+
+        Args:
+            rel_position: Relative [dx, dy, dz] from turret origin (metres, Z-up ENU).
+
+        Returns:
+            (pan_angle, tilt_angle) in radians — the angles sent to the motors this step.
+        """
+        pan, tilt = self._compute_aim_angles(rel_position)
+        self.hardware.pan_motor.setPosition(pan)
+        self.hardware.tilt_motor.setPosition(tilt)
+        return pan, tilt
 
     def _compute_aim_angles(self, rel_target: list[float]) -> tuple[float, float]:
         """Convert relative Cartesian position to pan/tilt motor angles.
