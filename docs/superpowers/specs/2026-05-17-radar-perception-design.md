@@ -65,10 +65,14 @@ decisions, with rationale:
    and emits a measurement. The node grounds the radar in space; the Python
    model produces the measurement.
 
-3. **The Search Radar is a separate entity with its own controller.** It is
+3. **The Search Radar is a separate, physically grounded entity.** It is
    external to ATLAS, so it is its own Webots `Robot` node at a fixed surveyed
-   location, running its own controller process, communicating with ATLAS over
-   an Emitter → Receiver radio link.
+   location. *Target architecture:* its own controller process communicating
+   with ATLAS over an Emitter → Receiver radio link. *First increment:* the
+   `Robot` node carries no controller; the `SearchRadar` model runs in-process
+   inside the ATLAS controller, which reads the node's pose directly. The cue
+   is a value object crossing a narrow interface, so the radio link is a later
+   transport-only swap. See "Implementation increments" below.
 
 4. **The FCR is part of ATLAS and driven by the ATLAS controller.** It is a
    pan/tilt pedestal carrying a radar body. The ATLAS controller owns the node
@@ -188,6 +192,27 @@ New ADRs required:
 - Perception architecture: separate bodies, two controllers, radio cue link.
 - Revision of ADR-0006 for cross-process track identity.
 - Resolution of the duplicate ADR-0003.
+
+## Implementation increments
+
+The design above is the target architecture. It is delivered incrementally so
+each step produces working, testable software and complexity is added against
+clean seams rather than all at once.
+
+- **Increment 1 — Physical Search Radar.** A grounded `Robot` node for the
+  Search Radar, with FOV gating and a rotating scan beam, modelled in-process.
+  Output stays on the existing `Detection` interface (turret-relative), so the
+  FSM and `TrackFilter` are untouched. Plan:
+  `2026-05-17-search-radar-physical-node.md`.
+- **Increment 2 — FCR rework + cue handoff.** The FCR becomes a grounded,
+  FOV-gated slewing tracker, cued by the Search Radar; the FSM's ACQUIRE/TRACK
+  transitions reflect real FOV gating. Plan:
+  `2026-05-17-fcr-rework-and-cue-handoff.md`.
+- **Deferred to later increments** (designed as seams, not built yet): the
+  Search Radar's own controller process and Emitter → Receiver radio link; the
+  migration of `TrackFilter` from turret-relative to world frame. Until the
+  frame migration lands, each radar converts its measurements to
+  turret-relative internally, keeping `TrackFilter` and the FSM unchanged.
 
 ## Open question for the weapons spec
 
