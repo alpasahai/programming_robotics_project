@@ -51,8 +51,11 @@ class SearchRadar:
     is always reported relative to ``turret_position`` (ADR-0006 membrane).
 
     Scan beam parameters (``beam_width``, ``scan_rate``) rotate a narrow beam
-    through all azimuths; see Task 3. Track timeout (``track_timeout``) is
-    deferred (Task 4).
+    through all azimuths; see Task 3. Track buffer persistence (``track_timeout``)
+    holds a track between beam passes: a detection refreshes the track to age 0;
+    each update without a detection ages the track by 1; a track is dropped when
+    ``age > track_timeout`` (i.e. after ``track_timeout + 1`` consecutive missed
+    updates).
 
     See ADR-0003 for the continuous sensor fusion rationale.
     See ADR-0006 for the sensor-membrane and track-id identity contract.
@@ -100,9 +103,12 @@ class SearchRadar:
             scan_rate:       Scan rate in radians per update() call (per
                              simulation step). The beam azimuth advances by
                              this amount each update().
-            track_timeout:   (Deferred — Task 4) Number of missed updates
-                             before a track is dropped. Stored but not yet
-                             used.
+            track_timeout:   Number of consecutive missed updates before a
+                             track is dropped. With ``track_timeout=N`` a
+                             track survives N updates with no re-detection
+                             (age 1 … N) and is dropped on update N+1
+                             (age N+1 > N). Use 0 to drop after the very
+                             first missed update.
             rng:             Optional seeded ``random.Random`` instance for
                              deterministic noise in tests. When ``None``, a
                              fresh ``random.Random()`` is created.
@@ -118,12 +124,14 @@ class SearchRadar:
         self._beam_width = beam_width
         self._scan_rate = scan_rate
         self._beam_azimuth = 0.0  # initialized to 0; advances each update()
-        # Deferred: track_timeout for Task 4.
         self._track_timeout = track_timeout
         self._rng = rng if rng is not None else random.Random()
-        self._detections: list[Detection] = []
+        # Track buffer: maps track_id → (Detection, age).
+        # age=0 means detected this cycle; incremented each update() without detection;
+        # dropped when age > track_timeout.
+        self._track_buffer: dict[int, tuple[Detection, int]] = {}
         self._target_node = None
-        self._target_position: list[float] | None = None
+        self._target_id: int | None = None
 
     def update(self) -> None:
         """Read all projectile positions, gate by range/elevation/azimuth, add noise.
@@ -131,27 +139,35 @@ class SearchRadar:
         For each projectile in ``self._projectiles`` (enumerated so that the
         index serves as track_id per ADR-0006):
         1. Advances the beam azimuth by ``scan_rate`` (at the start of the update).
-        2. Reads its world-frame position via ``getPosition()``.
-        3. Computes azimuth, elevation, and range relative to radar_position
-           using ``geometry.azimuth_elevation_range``.
-        4. Rejects the projectile if:
-           - range > max_range, OR
-           - |elevation| > vertical_fov / 2, OR
-           - |angle_diff(proj_azimuth, beam_azimuth)| > beam_width / 2
-           (all three gates must pass).
-        5. For accepted projectiles: subtracts turret_position (not
-           radar_position) and adds independent Gaussian noise on each axis.
-        6. Stores a ``Detection(track_id=index, position=noisy_vector)``.
+        2. Ages every existing track buffer entry by +1.
+        3. For each projectile that passes all three gates (range, elevation,
+           azimuth), writes/overwrites its buffer entry at age 0 with a fresh
+           noisy ``Detection``.
+        4. Drops any buffer entry whose age exceeds ``track_timeout``.
 
-        The locked target (set via ``set_target()``) is only updated when it
-        passes all gates. If it fails in a given cycle, ``get_target_position()``
-        retains the previous reading (stale but non-None, does not crash).
+        Gate conditions (all three must pass):
+          - Euclidean range from radar_position ≤ max_range
+          - |elevation| ≤ vertical_fov / 2
+          - |angle_diff(proj_azimuth, beam_azimuth)| ≤ beam_width / 2
+
+        Position noise: subtracts turret_position (not radar_position) and adds
+        independent Gaussian noise (std=noise_std) on each axis.
+
+        Track buffer persistence: a detected projectile refreshes its entry to
+        age 0 each update it is directly detected. Between beam passes, the entry
+        ages by 1 per update and persists until age > track_timeout. This means
+        with track_timeout=N a track survives N updates with no re-detection.
         """
-        # Advance the beam azimuth at the start of the update, before gating.
-        # This ensures each update cycle uses a consistent beam position.
+        # (a) Advance the beam azimuth before gating.
         self._beam_azimuth = (self._beam_azimuth + self._scan_rate) % (2 * math.pi)
 
-        self._detections = []
+        # (b) Age all existing tracks by 1.
+        self._track_buffer = {
+            tid: (det, age + 1)
+            for tid, (det, age) in self._track_buffer.items()
+        }
+
+        # (c) Gate projectiles; refresh buffer entries for those that pass.
         for index, proj in enumerate(self._projectiles):
             world = proj.getPosition()
             az, elevation, rng = azimuth_elevation_range(self._radar_position, world)
@@ -168,43 +184,59 @@ class SearchRadar:
                 world[i] - self._turret_position[i] + self._rng.gauss(0.0, self._noise_std)
                 for i in range(3)
             ]
-            self._detections.append(Detection(track_id=index, position=noisy))
-            # Reached only when the projectile passed all three gates above:
-            # the locked target is not refreshed when gated out, so its
-            # stale value is retained until the Task 4 track buffer lands.
-            if proj is self._target_node:
-                self._target_position = noisy
+            # Overwrite (or create) buffer entry at age 0 with fresh Detection.
+            self._track_buffer[index] = (Detection(track_id=index, position=noisy), 0)
+
+        # (d) Drop entries whose age exceeds track_timeout.
+        self._track_buffer = {
+            tid: (det, age)
+            for tid, (det, age) in self._track_buffer.items()
+            if age <= self._track_timeout
+        }
 
     def get_detections(self) -> list[Detection]:
-        """Return Detection objects for all detected projectiles.
+        """Return Detection objects for all live tracks in the buffer.
 
         Each Detection carries an integer track_id (the projectile's index in
-        the constructor list) and a noisy turret-relative position. The FSM
-        uses track_id to select and lock a target; it never holds a node
-        (ADR-0006).
+        the constructor list) and the most recently measured noisy turret-relative
+        position for that track. The FSM uses track_id to select and lock a target;
+        it never holds a node (ADR-0006).
+
+        Tracks persist between beam passes for up to ``track_timeout`` updates
+        after the last direct detection; their Detection reflects the last fresh
+        measurement taken when the beam was on the target.
 
         Returns a fresh list each call so callers cannot mutate internal state.
         Detection is immutable (NamedTuple) so the elements are safe to share.
 
         Used during SEARCH so the FSM can evaluate all returns and select
         one to lock onto. Returns an empty list before the first ``update()``
-        or when no projectiles are present or all are gated out.
+        or when no projectiles are present and the buffer is empty.
         """
-        return list(self._detections)
+        return [det for det, _age in self._track_buffer.values()]
 
     def get_target_position(self) -> list[float] | None:
-        """Return noisy relative position of the locked target [dx, dy, dz].
+        """Return the buffered noisy position of the locked target [dx, dy, dz].
+
+        Returns the most recently measured turret-relative position for the
+        locked target, as long as its track survives in the buffer. The value
+        is the last fresh measurement taken when the beam directly detected the
+        target; it persists through ``track_timeout`` missed updates.
 
         Returns:
-            Noisy turret-relative ``[dx, dy, dz]`` (metres) of the locked
-            target, updated each ``update()`` call when the target passes the
-            range and FOV gates.
-            ``None`` if ``set_target()`` has not been called yet, or
-            immediately after ``set_target()`` before the next ``update()``.
-            When the locked target fails the gate in a cycle, the previous
-            reading is retained (stale) and this method does not crash.
+            Noisy turret-relative ``[dx, dy, dz]`` (metres) if the locked
+            target's track is live in the buffer.
+            ``None`` if ``set_target()`` has not been called yet, immediately
+            after ``set_target()`` before the next ``update()``, or once the
+            locked target's track has been dropped from the buffer (timed out).
         """
-        return self._target_position
+        if self._target_id is None:
+            return None
+        entry = self._track_buffer.get(self._target_id)
+        if entry is None:
+            return None
+        det, _age = entry
+        return det.position
 
     def set_target(self, track_id: int) -> None:
         """Lock onto a specific projectile as the tracked target.
@@ -216,10 +248,10 @@ class SearchRadar:
 
         Called at ACQUIRE (SearchRadar only — FCR is single-target, cued at
         construction and not re-targeted by the FSM; see ADR-0006). After
-        this call, ``get_target_position()`` returns measurements for this
-        projectile only. Clears any previously stored target position so that
-        ``get_target_position()`` returns ``None`` until the next
-        ``update()``.
+        this call, ``get_target_position()`` returns buffered measurements for
+        this projectile only. Clears the buffer entry for the newly locked
+        target so that ``get_target_position()`` returns ``None`` until the
+        next ``update()`` detects and buffers it.
 
         Args:
             track_id: Integer index of the projectile to track, as returned
@@ -232,4 +264,7 @@ class SearchRadar:
                         out-of-bounds track_id.
         """
         self._target_node = self._projectiles[track_id]
-        self._target_position = None
+        self._target_id = track_id
+        # Clear any stale buffer entry for the newly locked target so that
+        # get_target_position() returns None until the next update() detects it.
+        self._track_buffer.pop(track_id, None)

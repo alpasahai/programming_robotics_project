@@ -608,3 +608,203 @@ def test_beam_sweep_discovers_target_then_loses_it():
     hits = sum(1 for count in detections_log if count > 0)
     misses = sum(1 for count in detections_log if count == 0)
     assert hits > 0 and misses > 0  # sweep must produce both hits and misses
+
+
+# ---------------------------------------------------------------------------
+# Track buffer persistence (Task 4)
+#
+# Off-by-one contract (drop rule: age > track_timeout):
+#   After the last detection cycle the track's age is set to 0.
+#   Each subsequent update with no re-detection increments age by 1.
+#   A track is dropped when age > track_timeout, i.e. after track_timeout+1
+#   no-detection updates.
+#
+#   With track_timeout=N:
+#     - Updates 1 … N after last detection: track still returned (age 1 … N, ≤ N)
+#     - Update N+1 after last detection: track dropped (age would be N+1 > N)
+#
+# These tests use a narrow-beam radar (beam_width = 20°) so we can control
+# precisely which update cycles detect the target by pre-positioning the beam.
+# ---------------------------------------------------------------------------
+
+def _make_narrow_beam_radar(projectiles, *, track_timeout=3, noise_std=0.0):
+    """Radar with a narrow 20° beam, scan_rate=0 (stationary), beam pre-aimed
+    at target (azimuth 0°) or away (set radar._beam_azimuth manually).
+
+    beam_width=20° → half-width 10°. Target placed due north (azimuth 0°).
+    When beam is at 0° the target is detected; when beam is at 90° it is not.
+    """
+    return SearchRadar(
+        projectiles,
+        turret_position=[0.0, 0.0, 0.0],
+        radar_position=[0.0, 0.0, 0.0],
+        noise_std=noise_std,
+        timestep_ms=32,
+        max_range=1000.0,
+        vertical_fov=math.pi,
+        beam_width=math.radians(20),
+        scan_rate=0.0,   # stationary — controlled manually in tests
+        track_timeout=track_timeout,
+        rng=random.Random(0),
+    )
+
+
+def test_track_persists_for_track_timeout_updates_after_beam_passes():
+    """A track is retained for exactly track_timeout updates with no re-detection.
+
+    Boundary: with track_timeout=3, updates 1, 2, 3 after beam passes still
+    return the track; update 4 drops it.
+    """
+    track_timeout = 3
+    proj = StubProjectile([[0.0, 100.0, 0.0]] * 20)  # stationary target, many positions
+    radar = _make_narrow_beam_radar([proj], track_timeout=track_timeout)
+
+    # Step 1: beam aimed at target (azimuth 0°) → detection, track enters buffer at age 0.
+    radar._beam_azimuth = 0.0
+    radar.update()
+    assert len(radar.get_detections()) == 1, "Precondition: target detected when beam is on it"
+
+    # Step 2: sweep beam away so target is no longer directly detected.
+    radar._beam_azimuth = math.radians(90)  # 90° away — well outside ±10° window
+
+    # Updates 1 through track_timeout: track still in buffer (age 1 … track_timeout ≤ track_timeout)
+    for i in range(1, track_timeout + 1):
+        radar.update()
+        detections = radar.get_detections()
+        track_ids = [d.track_id for d in detections]
+        assert 0 in track_ids, (
+            f"Track must persist at update {i} after beam passes "
+            f"(age={i}, track_timeout={track_timeout})"
+        )
+
+    # Update track_timeout+1: age would become track_timeout+1 > track_timeout → dropped.
+    radar.update()
+    detections = radar.get_detections()
+    track_ids = [d.track_id for d in detections]
+    assert 0 not in track_ids, (
+        f"Track must be dropped at update {track_timeout + 1} after beam passes "
+        f"(age would be {track_timeout + 1} > {track_timeout})"
+    )
+
+
+def test_track_dropped_exactly_on_timeout_boundary():
+    """Precise boundary: last visible on update N, absent on update N+1 (track_timeout=N)."""
+    track_timeout = 2
+    proj = StubProjectile([[0.0, 100.0, 0.0]] * 20)
+    radar = _make_narrow_beam_radar([proj], track_timeout=track_timeout)
+
+    # Detect once to seed the buffer
+    radar._beam_azimuth = 0.0
+    radar.update()
+    assert len(radar.get_detections()) == 1
+
+    # Sweep away permanently
+    radar._beam_azimuth = math.radians(90)
+
+    # Update 1: age=1 ≤ 2 → visible
+    radar.update()
+    assert 0 in [d.track_id for d in radar.get_detections()], "age=1: must be visible"
+
+    # Update 2: age=2 ≤ 2 → visible (last cycle)
+    radar.update()
+    assert 0 in [d.track_id for d in radar.get_detections()], "age=2: must still be visible"
+
+    # Update 3: age=3 > 2 → dropped
+    radar.update()
+    assert 0 not in [d.track_id for d in radar.get_detections()], "age=3: must be dropped"
+
+
+def test_continuous_redetection_keeps_track_alive_indefinitely():
+    """Continuous detection keeps track alive beyond what track_timeout would drop.
+
+    With track_timeout=1, without re-detection the track would expire after 2
+    no-detection updates. But if every update detects the target, the track
+    must remain alive indefinitely (age resets to 0 each cycle).
+    """
+    track_timeout = 1
+    N = 20
+    proj = StubProjectile([[0.0, 100.0, 0.0]] * (N + 5))
+    radar = _make_narrow_beam_radar([proj], track_timeout=track_timeout)
+
+    # Beam always pointed at the target — detected every update
+    radar._beam_azimuth = 0.0
+    for i in range(N):
+        radar.update()
+        detections = radar.get_detections()
+        assert 0 in [d.track_id for d in detections], (
+            f"Continuously detected track must be alive at update {i + 1}"
+        )
+
+
+def test_track_expires_after_zero_timeout():
+    """With track_timeout=0, a track is dropped on the very next update after last detection.
+
+    age > 0 means: after one update with no detection (age=1 > 0), it is dropped.
+    """
+    track_timeout = 0
+    proj = StubProjectile([[0.0, 100.0, 0.0]] * 10)
+    radar = _make_narrow_beam_radar([proj], track_timeout=track_timeout)
+
+    # Detect once
+    radar._beam_azimuth = 0.0
+    radar.update()
+    assert len(radar.get_detections()) == 1, "Precondition: detected when beam on target"
+
+    # Sweep away — one update is enough to drop the track
+    radar._beam_azimuth = math.radians(90)
+    radar.update()
+    assert radar.get_detections() == [], "track_timeout=0: track dropped after first missed update"
+
+
+def test_get_target_position_returns_buffered_position_when_beam_off_target():
+    """get_target_position() returns the buffered (last fresh) position when beam has swept away.
+
+    After set_target(), the first detection sets the buffered position.
+    When the beam sweeps away (no direct detection), get_target_position() returns
+    the last buffered value for as long as the track survives in the buffer.
+    """
+    track_timeout = 3
+    proj = StubProjectile([[0.0, 100.0, 0.0]] * 20)
+    radar = _make_narrow_beam_radar([proj], track_timeout=track_timeout)
+    radar.set_target(0)
+
+    # Detect once to seed the locked target's buffer entry
+    radar._beam_azimuth = 0.0
+    radar.update()
+    buffered_pos = radar.get_target_position()
+    assert buffered_pos is not None, "Precondition: target position set after detection"
+
+    # Sweep beam away — target not directly detected, but within timeout
+    radar._beam_azimuth = math.radians(90)
+    for _ in range(track_timeout):
+        radar.update()
+        pos = radar.get_target_position()
+        assert pos is not None, "Buffered target position must persist within timeout"
+        assert pos == buffered_pos, "Position must be the last buffered (not stale pre-buffer) value"
+
+
+def test_get_target_position_returns_none_after_track_drops():
+    """get_target_position() returns None once the locked target's track is dropped from the buffer.
+
+    After track_timeout+1 updates with no re-detection, the buffer entry is gone,
+    so get_target_position() must return None (not a stale value).
+    """
+    track_timeout = 2
+    proj = StubProjectile([[0.0, 100.0, 0.0]] * 20)
+    radar = _make_narrow_beam_radar([proj], track_timeout=track_timeout)
+    radar.set_target(0)
+
+    # Seed the buffer
+    radar._beam_azimuth = 0.0
+    radar.update()
+    assert radar.get_target_position() is not None
+
+    # Sweep beam away permanently
+    radar._beam_azimuth = math.radians(90)
+    for _ in range(track_timeout + 1):
+        radar.update()
+
+    # Track is now dropped — get_target_position() must return None
+    assert radar.get_target_position() is None, (
+        "After track drops from buffer, get_target_position() must return None"
+    )
