@@ -3,3 +3,4 @@ worlds/.*.wbproj
 worlds/.*.jpg
 .claude/
 .venv/
+*.log
