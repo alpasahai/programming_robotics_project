@@ -7,7 +7,7 @@ wrapped to (-π, π].
 """
 import math
 import pytest
-from geometry import azimuth_elevation_range, angle_diff
+from geometry import azimuth_elevation_range, angle_diff, angular_separation
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +233,6 @@ def test_realistic_search_scenario():
 # ---------------------------------------------------------------------------
 # Slice 6: angular_separation — great-circle angle between two (az, el) pairs
 # ---------------------------------------------------------------------------
-
-from geometry import angular_separation
-
 
 def test_angular_separation_same_direction_is_zero():
     """Two identical (az, el) pairs point in the same direction → separation = 0."""

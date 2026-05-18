@@ -94,6 +94,23 @@ def test_target_just_inside_cone_edge_is_detected():
     assert fcr.is_locked() is True
 
 
+def test_target_just_outside_cone_edge_is_not_detected():
+    """Target at 100.1% of fov_half_angle from boresight → not detected (near miss).
+
+    Symmetric counterpart to test_target_just_inside_cone_edge_is_detected.
+    Ensures the rejection boundary is tight: a target a hair outside the cone
+    must not be detected even though it is practically on the edge.
+    """
+    # 100.1 % of the FOV half-angle — just outside
+    target_az = BORESIGHT_AZ + FOV * 1.001
+    world_pos = _position_at_az_el_range(FCR_POS, target_az, BORESIGHT_EL, 10.0)
+    proj = StubProjectile([world_pos])
+    fcr = FireControlRadar(proj, FCR_POS, TURRET_POS, FOV, MAX_RANGE, noise_std=0.0)
+    fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+    assert fcr.is_locked() is False
+    assert fcr.get_target_position() is None
+
+
 # ---------------------------------------------------------------------------
 # Detection gating — outside cone
 # ---------------------------------------------------------------------------
@@ -164,16 +181,33 @@ def test_detected_position_is_turret_relative():
     assert result == pytest.approx(expected, abs=1e-9)
 
 
-def test_detected_position_with_nonzero_turret_offset():
-    """Turret and FCR co-located but offset from origin — relative position is correct."""
-    turret = [5.0, -3.0, 1.0]
-    world_pos = _position_at_az_el_range(turret, BORESIGHT_AZ, BORESIGHT_EL, 8.0)
+def test_distinct_fcr_and_turret_positions():
+    """fcr_position (gating origin) and turret_position (report origin) can differ.
+
+    The FCR sensor is mounted 0.5 m above the turret pivot.  Gating uses
+    fcr_position to decide whether the target is visible; the reported
+    position is world − turret_position (the pivot), not world − fcr_position.
+    Both must be exercised in the same call.
+    """
+    turret_pos = [0.0, 0.0, 0.0]
+    fcr_pos    = [0.0, 0.0, 0.5]   # sensor 0.5 m above turret pivot
+
+    # Place the target at range 10 m due North from the FCR sensor origin.
+    world_pos = _position_at_az_el_range(fcr_pos, BORESIGHT_AZ, BORESIGHT_EL, 10.0)
     proj = StubProjectile([world_pos])
-    fcr = FireControlRadar(proj, turret, turret, FOV, MAX_RANGE, noise_std=0.0)
+    fcr = FireControlRadar(proj, fcr_pos, turret_pos, FOV, MAX_RANGE, noise_std=0.0)
     fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+
+    assert fcr.is_locked() is True
+
+    # Reported position must be relative to the turret pivot, not the sensor.
     result = fcr.get_target_position()
-    expected = [world_pos[i] - turret[i] for i in range(3)]
-    assert result == pytest.approx(expected, abs=1e-9)
+    expected_relative_to_turret = [world_pos[i] - turret_pos[i] for i in range(3)]
+    expected_relative_to_fcr    = [world_pos[i] - fcr_pos[i]    for i in range(3)]
+
+    assert result == pytest.approx(expected_relative_to_turret, abs=1e-9)
+    # Confirm the two origins genuinely differ so the test is non-trivial.
+    assert result != pytest.approx(expected_relative_to_fcr, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------
