@@ -1,5 +1,9 @@
 # FCR Rework and Cue Handoff — Implementation Plan
 
+> **⚠️ SUPERSEDED — do not execute.** This plan predates PR #18 (turret reframed
+> as the FCR body) and the arrival of `search_radar_controller` as a separate
+> process. Use `docs/superpowers/plans/2026-05-18-fcr-rework-cue-handoff-revised.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the Fire-Control Radar into a physically grounded, FOV-gated slewing tracker that is cued onto the target by the Search Radar, so the FSM's `ACQUIRE` and `TRACK` states reflect real sensor geometry.
