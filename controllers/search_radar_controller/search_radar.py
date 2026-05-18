@@ -7,6 +7,7 @@ import random
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from geometry import azimuth_elevation_range
 
 
 class Detection(NamedTuple):
@@ -193,14 +194,16 @@ class SearchRadar:
     def _is_inside_beam_cone(self, world: list[float]) -> bool:
         """Return whether a world position is inside the rendered FOV cone."""
         spec = self.get_beam_visual_spec()
+
+        if self._beam_width >= 2 * math.pi:
+            _az, elevation, rng = azimuth_elevation_range(self._radar_position, world)
+            return rng <= spec.max_range and abs(elevation) <= self._half_fov
+
         local = self._beam_local_position(world)
         if local[1] < 0.0 or local[1] > spec.max_range:
             return False
         radius_at_y = math.tan(spec.half_angle) * local[1]
-        return (
-            math.sqrt(local[0] * local[0] + local[2] * local[2])
-            <= radius_at_y
-        )
+        return math.sqrt(local[0] * local[0] + local[2] * local[2]) <= radius_at_y
 
     def update(self) -> None:
         """Read all projectile positions, gate by range/elevation/azimuth, add noise.
