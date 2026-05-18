@@ -11,6 +11,12 @@ PROTO AtlasTurret [
   Robot {
     translation IS translation
     children [
+      Receiver {
+        name "FCR_CUE_RECEIVER"
+        channel 1
+        allowedChannels [1]
+      }
+
       HingeJoint {
         jointParameters HingeJointParameters {
           position 0
