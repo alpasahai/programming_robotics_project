@@ -124,10 +124,10 @@ while robot.step(timestep) != -1:
     # 4. Emit the world-frame cue over the radio link.
     if emitter is not None:
         emitter.send(struct.pack("ddd", wx, wy, wz))
-
-    # DEBUG: print the cue so a human can verify plausible world coordinates.
-    # Remove or guard with a verbosity flag once Webots integration is confirmed.
-    print(
-        f"[SR DEBUG] cue sent: track_id={chosen.track_id}"
-        f"  world=({wx:.3f}, {wy:.3f}, {wz:.3f})"
-    )
+        # DEBUG: print the cue so a human can verify plausible world coordinates.
+        # Only prints when a cue was actually sent (emitter present).
+        # Remove or guard with a verbosity flag once Webots integration is confirmed.
+        print(
+            f"[SR DEBUG] cue sent: track_id={chosen.track_id}"
+            f"  world=({wx:.3f}, {wy:.3f}, {wz:.3f})"
+        )

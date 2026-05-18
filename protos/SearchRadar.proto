@@ -6,12 +6,14 @@ PROTO SearchRadar [
   field SFVec3f translation 0 4 0
   field SFString name "SEARCH_RADAR"
   field SFString motorName "SEARCH_RADAR_MOTOR"
+  field SFBool supervisor TRUE
 ] {
   Robot {
     translation IS translation
     name IS name
     model "search_radar"
     controller "search_radar_controller"
+    supervisor IS supervisor
 
     children [
       Emitter {
