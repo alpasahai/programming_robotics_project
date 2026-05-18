@@ -130,7 +130,7 @@ class AtlasFSM:
         self.state = self.SEARCH
 
         # SEARCH bookkeeping
-        self._detection_count = 0  # consecutive steps with at least one detection
+        self._detection_count = 0  # consecutive steps with a non-None cue from the cue link
         self._pan_angle = 0.0  # current pan motor angle (radians)
         self._pan_direction = 1  # +1 sweeping positive, -1 sweeping negative
 
@@ -243,7 +243,7 @@ class AtlasFSM:
             self._detection_count = 0
 
         if self._detection_count >= self.config.acquire_frames:
-            # _target is now a WORLD-FRAME position [x, y, z], not a track_id.
+            # Store the world-frame cue; _world_to_relative converts it to turret-relative each ACQUIRE step.
             self._target = cue
             self._transition(self.ACQUIRE)
 
