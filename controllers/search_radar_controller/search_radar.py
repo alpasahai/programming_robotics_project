@@ -56,12 +56,20 @@ class SearchRadar:
     track buffer of ``(Detection, age)`` tuples internally. Nothing outside
     this class holds a Webots node handle (ADR-0006: sensor membrane).
 
-    During SEARCH: get_detections() returns Detection objects so the FSM can
-    select a target by track_id.
+    This class runs in the dedicated ``search_radar_controller`` process.
+    It selects one target internally and emits a single world-frame cue over
+    an ``Emitter`` radio link. ``track_id``s and Webots node handles stay
+    inside this process; ATLAS receives only the cue position via
+    ``SearchRadarLink``. The SearchRadar does not feed the TrackFilter
+    directly — continuous sensor fusion is explicitly rejected (ADR-0010).
 
-    After set_target(track_id): get_target_position() returns noisy
-    measurements of the locked target, which are fused into the TrackFilter
-    alongside FCR.
+    During SEARCH: ``get_detections()`` returns Detection objects so that the
+    internal target-selection logic can choose which track to cue.
+
+    Note: ``set_target()`` and ``get_target_position()`` are retained in the
+    interface but are not called in the current two-process design (the radio
+    link carries the selected cue position out of this process). These methods
+    appear to be dead code and are candidates for removal in a future cleanup.
 
     Gating: each projectile is only reported when:
       - target is inside the beam-aligned cone returned by
@@ -71,14 +79,15 @@ class SearchRadar:
     is always reported relative to ``turret_position`` (ADR-0006 membrane).
 
     Scan beam parameters (``beam_width``, ``scan_rate``) rotate a narrow beam
-    through all azimuths; see Task 3. Track buffer persistence (``track_timeout``)
-    holds a track between beam passes: a detection refreshes the track to age 0;
-    each update without a detection ages the track by 1; a track is dropped when
-    ``age > track_timeout`` (i.e. after ``track_timeout + 1`` consecutive missed
-    updates).
+    through all azimuths. Track buffer persistence (``track_timeout``) holds a
+    track between beam passes: a detection refreshes the track to age 0; each
+    update without a detection ages the track by 1; a track is dropped when
+    ``age > track_timeout`` (i.e. after ``track_timeout + 1`` consecutive
+    missed updates).
 
-    See ADR-0003 for the continuous sensor fusion rationale.
+    See ADR-0003 for the hard-handoff acquisition design.
     See ADR-0006 for the sensor-membrane and track-id identity contract.
+    See ADR-0009 for the two-process radio-cue link.
     """
 
     def __init__(
@@ -309,12 +318,15 @@ class SearchRadar:
         The FSM holds only the integer ``track_id`` — it never receives or
         stores a node handle.
 
-        Called at ACQUIRE (SearchRadar only — FCR is single-target, cued at
-        construction and not re-targeted by the FSM; see ADR-0006). After
-        this call, ``get_target_position()`` returns buffered measurements for
-        this projectile only. Clears the buffer entry for the newly locked
-        target so that ``get_target_position()`` returns ``None`` until the
-        next ``update()`` detects and buffers it.
+        Locks onto a specific projectile so that ``get_target_position()``
+        returns buffered measurements for that projectile only. Clears the
+        buffer entry for the newly locked target so that
+        ``get_target_position()`` returns ``None`` until the next ``update()``
+        detects and buffers it.
+
+        Note: this method is not called in the current two-process design,
+        where the radio link carries the selected cue out of this process.
+        It is retained for interface completeness but is effectively dead code.
 
         Args:
             track_id: Integer index of the projectile to track, as returned

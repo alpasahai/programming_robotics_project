@@ -4,8 +4,11 @@ This is the only module that imports filterpy. The KalmanFilter attributes
 kf.F, kf.H, kf.R, kf.Q, and kf.B are kept public so tests can verify the
 matrix design directly.
 
+The filter receives FCR measurements only. The Search Radar runs as a
+separate controller process and cues the FSM over a radio link; it does not
+feed this filter directly (see ADR-0003 and ADR-0010).
+
 See ADR-0002 for the 6-state constant-velocity + gravity model.
-See ADR-0003 for the continuous dual-sensor fusion design.
 See ADR-0005 for the filterpy library choice.
 """
 
@@ -20,26 +23,27 @@ _INITIAL_COVARIANCE = 1000.0
 
 
 class TrackFilter:
-    """Kalman filter that fuses FCR and SearchRadar measurements into a
-    clean current-state estimate of target position and velocity.
+    """Kalman filter that smooths FCR measurements into a clean current-state
+    estimate of target position and velocity.
 
     State vector: [x, y, z, vx, vy, vz] — relative to turret, Z-up ENU.
     Process model: constant velocity + gravity (az = -9.81 m/s²) as control input.
-    Measurement model: direct position observation [x, y, z] from either sensor.
+    Measurement model: direct position observation [x, y, z] from the FCR.
 
-    Both sensors update the same filter every timestep, weighted by their
-    noise covariances. FCR dominates (low R_fcr); SearchRadar contributes
-    a weaker correction (high R_search). This is genuine continuous fusion —
-    neither sensor is gated by FSM state.
+    Only ``update_fcr()`` is called during normal operation. The constructor
+    accepts an ``R_search`` parameter (stored as ``self._R_search``) which is
+    retained for potential future use but is not referenced by any active update
+    path — continuous Search Radar fusion is explicitly rejected in ADR-0010.
 
     The filterpy KalmanFilter instance is exposed as ``self.kf`` so that
     the matrix design (F, H, B, R, Q) can be inspected directly in tests.
 
     This class is the seam for future filter upgrades (e.g. EKF, UKF, IMM).
-    Swapping this class does not affect FCR, SearchRadar, or the FSM.
+    Swapping this class does not affect FCR, the SearchRadar link, or the FSM.
 
     See ADR-0002 for Kalman filter rationale.
-    See ADR-0003 for continuous fusion rationale.
+    See ADR-0003 for the hard-handoff acquisition design (Search Radar cues;
+    FCR tracks exclusively after lock).
     See ADR-0005 for filterpy library choice.
     """
 

@@ -30,7 +30,9 @@ class FireControlRadar:
     The position frame is Z-up ENU: dx = East, dy = North, dz = Up, all
     measured from the turret origin.
 
-    See ADR-0004 for upgrade path to a real Webots sensor node.
+    See ADR-0008 (supersedes ADR-0004): the FCR remains permanently simulated
+    as the turret-aim sensor; the former upgrade path to a generic Webots
+    ``Radar`` or ``RangeFinder`` node is explicitly rejected.
     """
 
     def __init__(
