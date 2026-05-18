@@ -22,7 +22,7 @@ The cue-driven fire-control system being built. Receives coarse world-frame cues
 
 ## Track Filter
 
-The subsystem that receives raw FCR measurements and smooths them into a clean current-state estimate of position and velocity. Owns the position history buffer. Currently implemented as a finite-difference velocity estimator over a fixed-size deque; the Kalman filter upgrade replaces only this class. Sits between the FCR and the Prediction Module. Does not know the turret position — it receives relative coordinates from the FCR.
+The subsystem that receives raw FCR measurements and smooths them into a clean current-state estimate of position and velocity. Implemented as a Kalman filter — a 6-state constant-velocity + gravity model via `filterpy` (see ADR-0002, ADR-0005). It now receives FCR measurements only; the Search Radar no longer feeds it directly (it cues the FSM over the radio link instead). Sits between the FCR and the Prediction Module. Does not know the turret position — it receives relative coordinates from the FCR.
 
 ## Track Report
 
