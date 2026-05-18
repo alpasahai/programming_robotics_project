@@ -30,9 +30,10 @@
 
 Use the `atlas-controls-engineer` agent for every subagent and the orchestrator. Each task carries a **Model · Effort** tag.
 
-- **Model:** `haiku` = mechanical/fully-specified; `sonnet` = moderate reasoning; `opus` = judgment calls and cross-cutting changes.
+- **Model:** `haiku` (Codex: `gpt-5.4-mini`) = mechanical/fully-specified; `sonnet` (Codex: `gpt-5.4`) = moderate reasoning; `opus` (Codex: `gpt-5.5`) = judgment calls and cross-cutting changes.
 - **Effort:** `low` = transcription-level; `medium` = design small logic within a clear spec; `high` = reason through edge cases / cross-file effects.
 - **The orchestrator is always Opus, and every between-task review is done by Opus.**
+- **Codex orchestration:** If you're Codex and you're orchestrating this plan, use the Codex models instead: `gpt-5.5` for the orchestrator/reviews, `gpt-5.4` where the plan says `sonnet`, and `gpt-5.4-mini` where the plan says `haiku`.
 - **Tuning is never delegated to haiku** — Webots parameter tuning is orchestrator (Opus) or human.
 - **Announce the `model · effort` tag in visible text before every `Agent` dispatch.**
 - A subagent that hits ambiguity stops and escalates to the orchestrator rather than guessing.
@@ -76,7 +77,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 1 — Shared `lib/` directory
 
-**Model: sonnet · Effort: low** — file move plus `runtime.ini`/`conftest` path wiring; mechanical but easy to get path levels wrong.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: low** — file move plus `runtime.ini`/`conftest` path wiring; mechanical but easy to get path levels wrong.
 
 **Required:** `geometry.py` is needed by both the FCR (in `atlas_controller`) and `SearchRadar` (moving to `search_radar_controller`). It must live in one place importable by both processes.
 
@@ -95,7 +96,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 2 — Move `SearchRadar` into its controller
 
-**Model: sonnet · Effort: low** — file move plus a test `conftest`; the class body does not change.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: low** — file move plus a test `conftest`; the class body does not change.
 
 **Required:** With the Search Radar running as its own process, `SearchRadar` must live in `search_radar_controller/`, not `atlas_controller/`. `atlas_controller` no longer imports it.
 
@@ -115,7 +116,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 3 — FCR rework: FOV cone gated by the turret aim
 
-**Model: sonnet · Effort: medium** — class rewrite plus a `geometry.angular_separation` helper; interface care.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — class rewrite plus a `geometry.angular_separation` helper; interface care.
 
 **Required:** The FCR must detect the projectile only when it lies inside a narrow FOV cone around the *turret's current aim* and within range — not unconditionally as today. It has no boresight of its own; the turret aim is passed in.
 
@@ -141,7 +142,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 4 — Search Radar process emits cues
 
-**Model: sonnet · Effort: medium** — Webots `Emitter` PROTO syntax plus a controller rewrite; `struct` serialisation.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — Webots `Emitter` PROTO syntax plus a controller rewrite; `struct` serialisation.
 
 **Required:** The Search Radar process must detect the projectile, select one target, and broadcast that target's world position each step over a radio link.
 
@@ -166,7 +167,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 5 — Turret receives cues
 
-**Model: sonnet · Effort: medium** — `Receiver` PROTO syntax plus a small new tested class.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — `Receiver` PROTO syntax plus a small new tested class.
 
 **Required:** `atlas_controller` must receive the Search Radar's cue each step and expose the latest one through a narrow, testable interface.
 
@@ -191,7 +192,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 6 — FSM rework: cue-driven SEARCH and ACQUIRE
 
-**Model: opus · Effort: medium** — modifies the central FSM and the `SensorSuite` contract; cross-cutting and sensitive.
+**Model: opus (Codex: `gpt-5.5`) · Effort: medium** — modifies the central FSM and the `SensorSuite` contract; cross-cutting and sensitive.
 
 **Required:** The FSM must consume cues from the `SearchRadarLink` instead of an in-process `SearchRadar`. `SEARCH` waits for a cue; `ACQUIRE` slews the turret toward the cue and waits for the FCR to lock.
 
@@ -217,7 +218,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 7 — Wire `atlas_controller.py`
 
-**Model: sonnet · Effort: low** for the controller edit. **Webots verification/tuning is orchestrator (Opus, effort: medium) or human.**
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: low** for the controller edit. **Webots verification/tuning is orchestrator (Opus; Codex: `gpt-5.5`, effort: medium) or human.**
 
 **Required:** The controller must construct the `SearchRadarLink` and the new FCR, feed the turret aim to the FCR, and drop the removed in-process `SearchRadar` and `update_search()` calls.
 
@@ -239,7 +240,7 @@ Tasks 3 (FCR) and 4–5 (radio link) touch disjoint files once Task 1 lands and 
 
 ## Task 8 — Documentation
 
-**Model: split.** ADR-0008/0009 authoring and the `CONTEXT.md` rewrite: **haiku · Effort: low** (content outlined below). Revising ADR-0006 and resolving the duplicate ADR-0003: **opus · Effort: medium** — judgment calls, not transcription.
+**Model: split.** ADR-0008/0009 authoring and the `CONTEXT.md` rewrite: **haiku (Codex: `gpt-5.4-mini`) · Effort: low** (content outlined below). Revising ADR-0006 and resolving the duplicate ADR-0003: **opus (Codex: `gpt-5.5`) · Effort: medium** — judgment calls, not transcription.
 
 **Required:** Record the new FCR design and the radio cue link, and reconcile the affected ADRs.
 

@@ -25,9 +25,10 @@
 Each task carries a **Model · Effort** tag for the subagent that executes it. Goal: cheapest model and lowest reasoning effort that will not degrade quality.
 
 **Model** — capability tier:
-- **haiku** — fully specified, mechanical, self-contained.
-- **sonnet** — moderate reasoning: logic within a clear spec, Webots/proto syntax.
-- **opus** — judgment calls, cross-cutting changes, ambiguity. The orchestrator is always Opus, and every between-task review is done by Opus regardless of the task's execution model.
+- **haiku** (Codex: `gpt-5.4-mini`) — fully specified, mechanical, self-contained.
+- **sonnet** (Codex: `gpt-5.4`) — moderate reasoning: logic within a clear spec, Webots/proto syntax.
+- **opus** (Codex: `gpt-5.5`) — judgment calls, cross-cutting changes, ambiguity. The orchestrator is always Opus, and every between-task review is done by Opus regardless of the task's execution model.
+- **Codex orchestration:** If you're Codex and you're orchestrating this plan, use the Codex models instead: `gpt-5.5` for the orchestrator/reviews, `gpt-5.4` where the plan says `sonnet`, and `gpt-5.4-mini` where the plan says `haiku`.
 
 **Effort** — how much reasoning the subagent spends, set independently of model:
 - **low** — transcription-level: the plan dictates the code/content; follow it.
@@ -59,7 +60,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 1 — FSM fire command
 
-**Model: sonnet · Effort: medium** — small, well-bounded state-machine change; the only unit-tested task, so the interface must be right.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — small, well-bounded state-machine change; the only unit-tested task, so the interface must be right.
 
 **Required:** The controller needs to know the exact moment the FSM commits to a shot and where to aim it. The FSM must signal this *once* per engagement and must not spawn anything itself (node spawning is Webots-specific and untestable — it belongs in the controller).
 
@@ -172,7 +173,7 @@ git commit -m "feat(fsm): emit a one-shot fire command on entering ENGAGING"
 
 ## Task 2 — `AtlasBullet.proto` and the importable declaration
 
-**Model: sonnet · Effort: medium** — Webots PROTO/`.wbt` syntax. Inspect `protos/SimulatedProjectile.proto` and `protos/AtlasTurret.proto` first to copy header and field conventions.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — Webots PROTO/`.wbt` syntax. Inspect `protos/SimulatedProjectile.proto` and `protos/AtlasTurret.proto` first to copy header and field conventions.
 
 **Required:** The turret needs a projectile template to spawn. It must be a `Robot` (not a plain `Solid`) because it carries a `TouchSensor` device and a controller. It is never pre-placed — `IMPORTABLE EXTERNPROTO` makes it spawnable at runtime via `importMFNodeFromString`.
 
@@ -276,7 +277,7 @@ git commit -m "feat(world): add an importable AtlasBullet projectile proto"
 
 ## Task 3 — `atlas_bullet_controller`
 
-**Model: sonnet · Effort: low** — small, self-contained Webots controller; the structure is fully dictated below.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: low** — small, self-contained Webots controller; the structure is fully dictated below.
 
 **Required:** Only the controller of the `Robot` that owns a `TouchSensor` can read it (Webots device ownership — see the spec's sensor discussion). The bullet therefore needs its own minimal controller to detect contact and publish the result where the turret supervisor can read it: the bullet's `customData` field.
 
@@ -329,7 +330,7 @@ git commit -m "feat(bullet): add the bullet collision-reporter controller"
 
 ## Task 4 — Spawn and launch the bullet
 
-**Model: sonnet · Effort: medium** for the controller edit. **The verification/tuning step is orchestrator (Opus) or human** — `MUZZLE_SPEED` and `MUZZLE_OFFSET_M` are tuned by watching the bullet in Webots, not by haiku.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** for the controller edit. **The verification/tuning step is orchestrator (Opus; Codex: `gpt-5.5`) or human** — `MUZZLE_SPEED` and `MUZZLE_OFFSET_M` are tuned by watching the bullet in Webots, not by haiku.
 
 **Required:** When the FSM commits to a shot, the supervisor must put a bullet in the air along the aim direction.
 
@@ -435,7 +436,7 @@ git commit -m "feat(controller): spawn and launch a bullet on the FSM fire comma
 
 ## Task 5 — Bullet lifecycle and hit resolution
 
-**Model: sonnet · Effort: medium** for the controller edit. **The safety-timeout value is tuned by orchestrator/human**, not haiku.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** for the controller edit. **The safety-timeout value is tuned by orchestrator/human**, not haiku.
 
 **Required:** A spawned bullet must be resolved and removed — otherwise bullets accumulate in the scene. The bullet self-reports contact via `customData`; the supervisor reads it, decides whether the ball or the ground was struck, and removes the node. A safety timeout covers a bullet that never reports.
 
@@ -496,7 +497,7 @@ git commit -m "feat(controller): resolve and recycle the bullet on hit, ground, 
 
 ## Task 6 — ADR
 
-**Model: haiku · Effort: low** — the ADR content is drafted below; mechanical authoring.
+**Model: haiku (Codex: `gpt-5.4-mini`) · Effort: low** — the ADR content is drafted below; mechanical authoring.
 
 **Required:** Record the decision, consistent with the existing `docs/adr/` series (next free number is **0008**).
 
