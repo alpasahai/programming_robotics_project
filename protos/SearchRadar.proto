@@ -52,9 +52,10 @@ PROTO SearchRadar [
             }
 
             DEF SR_FOV_BEAM Pose {
-              # The controller updates SR_FOV_COORDS from the SearchRadar
-              # max_range, vertical_fov, and beam_width runtime parameters.
-              # Local +Y is azimuth 0 in the SearchRadar math.
+              translation 0 10 1.1
+              # The controller updates this box from SearchRadar's software
+              # range, azimuth beam width, and vertical FOV. Local +Y is
+              # azimuth 0 in the SearchRadar math.
               children [
                 Shape {
                   appearance PBRAppearance {
@@ -65,24 +66,8 @@ PROTO SearchRadar [
                     transparency 0.82
                   }
 
-                  geometry IndexedFaceSet {
-                    solid FALSE
-                    coord DEF SR_FOV_COORDS Coordinate {
-                      point [
-                        0 0 1.1
-                        -1.75 10 11.1
-                        1.75 10 11.1
-                        1.75 10 -8.9
-                        -1.75 10 -8.9
-                      ]
-                    }
-                    coordIndex [
-                      0 1 2 -1
-                      0 2 3 -1
-                      0 3 4 -1
-                      0 4 1 -1
-                      1 4 3 2 -1
-                    ]
+                  geometry DEF SR_FOV_BOX Box {
+                    size 7 20 40
                   }
                 }
               ]

@@ -7,6 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 WORLD_FILE = REPO_ROOT / "worlds" / "ATLA_v1.wbt"
 PROJECTILE_PROTO = REPO_ROOT / "protos" / "SimulatedProjectile.proto"
 TURRET_PROTO = REPO_ROOT / "protos" / "AtlasTurret.proto"
+SEARCH_RADAR_PROTO = REPO_ROOT / "protos" / "SearchRadar.proto"
 
 
 def test_world_uses_project_local_protos_for_projectile_and_turret():
@@ -34,3 +35,14 @@ def test_projectile_and_turret_protos_preserve_controller_contracts():
     assert "field SFBool supervisor TRUE" in turret_proto
     assert 'name "PAN_MOTOR"' in turret_proto
     assert 'name "TILT_MOTOR"' in turret_proto
+
+
+def test_search_radar_proto_preserves_runtime_fov_contracts():
+    """The SearchRadar controller depends on these DEF/device names."""
+    search_radar_proto = SEARCH_RADAR_PROTO.read_text(encoding="utf-8")
+
+    assert "DEF SR_FOV_BEAM Pose" in search_radar_proto
+    assert "translation 0 10 1.1" in search_radar_proto
+    assert "geometry DEF SR_FOV_BOX Box" in search_radar_proto
+    assert "size 7 20 40" in search_radar_proto
+    assert 'name "SEARCH_RADAR_ANGLE"' in search_radar_proto
