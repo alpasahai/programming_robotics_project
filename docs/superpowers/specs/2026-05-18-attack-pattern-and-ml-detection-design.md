@@ -43,6 +43,32 @@ detection is non-trivial. The pattern is stored as **data** (a period plus
 variation, or an explicit list of launch times) — not hardcoded logic — so new
 patterns are easy to author.
 
+The pattern is **preloaded** at startup via a dedicated function (the attacker
+controller calls it once during setup to obtain the launch schedule) rather than
+generated reactively each step.
+
+### Run flow and scoring (refined 2026-05-18)
+
+For the first version, the rules are deliberately simple:
+
+- **One projectile alive at a time.** Launch timing in the pattern is spaced
+  widely enough that each ball reliably *resolves* — either destroyed by the
+  laser or landed on the ground — before the next ball is launched. This avoids
+  any need for multi-target tracking in the first cut.
+- **Both outcomes recycle the ball** (reset + relaunch the next one); the run is
+  endless. There is no sim-ending condition.
+- **Scoring:**
+  - Ball reaches the ground → **attacker** scores a point.
+  - Ball destroyed by the ATLAS laser → **defender (ATLAS)** scores a point.
+- "Destroyed" / "removed" = **recycle**, not true node deletion: `reset` the
+  ball (teleport away, zero velocity) and relaunch. This is the same mechanism
+  the pooled-projectile design uses.
+
+Score is held in the attacker controller (it owns the projectiles and knows each
+launch). Laser-destroy detection is reported to it by the turret side, or the
+attacker observes the ball state directly via the supervisor API — interface to
+be decided at implementation time.
+
 ### Projectile physics — start simple
 
 Begin with **ideal, drag-free projectile physics** so reality matches the
