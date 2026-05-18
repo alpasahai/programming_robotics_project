@@ -1,39 +1,34 @@
 # ADR-0006: Sensor Membrane and Track-ID Target Identity
 
-**Status:** Accepted
-**Supersedes (in part):** ADR-0003-continuous-kalman-fusion-both-sensors.md — the
-clause "the FSM only controls set_target() ... at the ACQUIRE transition" is
-revised here (see Decision).
+**Status:** Accepted, revised by ADR-0008 and ADR-0009
+**Supersedes (in part):** ADR-0010 — the continuous-fusion design and the
+clause "the FSM only controls set_target() ... at the ACQUIRE transition" are
+rejected by the current cue-handoff design.
 
 ## Decision
 
 **The sensor membrane.** Webots `Solid` node handles are treated as a
 *capability to read ground truth* — anything holding a node can call
 `getPosition()` and obtain the true, un-noised position. Such handles must not
-propagate outside the radar classes. `FireControlRadar` and `SearchRadar` are
-the membrane: inside them, code touches ground truth and adds simulated noise;
-everything downstream — `TrackFilter`, `BallisticTrajectoryPredictor`, the FSM —
-handles only noised measurements and abstract integer `track_id`s.
+propagate outside the radar processes and sensor classes.
 
-**Track-ID target identity.** `SearchRadar.get_detections()` returns
-`Detection` values — an immutable `(track_id: int, position: list[float])`
-pair. The FSM selects a target by `track_id` and passes that integer to
-`SearchRadar.set_target(track_id)`. The SearchRadar owns the `track_id → node`
-mapping and resolves it internally.
+The membrane now spans a process boundary. The Search Radar process owns
+projectile nodes, `Detection` values, and `track_id` discipline internally. The
+radio cue crossing into `atlas_controller` is only a bare world position:
+`[x, y, z]`. No Webots node handle and no `track_id` reaches the ATLAS FSM.
 
-**FCR is single-target, cued at construction.** The Fire-Control Radar tracks
-exactly one target. It receives its projectile node at construction and is not
-re-targeted by the FSM. `FireControlRadar.set_target(node)` remains in the
-interface for future controller-driven re-cueing, but the FSM does not call it.
-Consequently the FSM, at ACQUIRE, locks only the SearchRadar (and resets the
-TrackFilter) — it does **not** call `fcr.set_target`.
+**FCR is a single-target turret-aim sensor.** The Fire-Control Radar tracks the
+one projectile supplied by the controller and detects it only when the turret's
+commanded aim places it inside the FOV cone. The FSM does not retarget the FCR,
+and `FireControlRadar.set_target()` no longer exists.
 
 ## Context
 
-At the ACQUIRE transition the FSM must lock a sensor onto a chosen target. The
-FSM's only view of the scene is `SearchRadar.get_detections()`. Originally that
-returned bare positions, so the FSM had no way to name the target a `set_target`
-call needs.
+At the ACQUIRE transition the FSM must point the turret toward a target without
+receiving a ground-truth capability. In the earlier in-process design the FSM's
+only view of the scene was `SearchRadar.get_detections()`, and `track_id`
+provided an inert target identity. In the revised two-process design, even that
+identity stays inside the Search Radar process.
 
 The deeper issue: the project *simulates* sensors — the radars read the
 projectile's true Webots position and add Gaussian noise to fake an imprecise
@@ -49,28 +44,32 @@ This boundary existed in design intent (ADR-0004) but was never codified.
    states — a latent membrane leak, clean only by discipline.
 2. **Detection carries an opaque handle.** Rejected: leak-free only if the
    handle is genuinely inert; opacity by convention is fragile.
-3. **Detection carries an integer `track_id` (chosen).** An integer carries no
-   capability — the FSM cannot read truth from it. The membrane holds by
-   construction, not discipline.
+3. **Detection carries an integer `track_id` (previous in-process design).** An
+   integer carries no capability — the FSM cannot read truth from it. This was
+   acceptable while Search Radar lived inside `atlas_controller`.
+4. **Radio cue carries only a world position (chosen current design).** The
+   Search Radar process keeps `track_id`s and node handles private. ATLAS gets
+   enough information to slew the turret, but not enough to bypass the sensor
+   model.
 
-A variant of (3) had FCR also resolve `track_id`s, which required giving FCR the
-full projectile list. Rejected: FCR tracks one target by definition and never
-needs a node universe. Only the wide-beam SearchRadar does.
+A variant had FCR also resolve `track_id`s, which required giving FCR the full
+projectile list. Rejected: FCR tracks one target by definition and never needs a
+node universe. Only the wide-beam Search Radar process does.
 
 ## Reasoning
 
-Track-IDs make the membrane a structural property: no node-typed value exists in
-the FSM's scope, so no leak is possible regardless of future edits. Keeping the
-`track_id → node` map solely in SearchRadar matches the domain — the wide-beam
-acquisition radar is the component that sees every target. Leaving FCR
-single-target keeps it untouched and honest to its narrow-beam nature.
+The process boundary makes the membrane a structural property: no node-typed
+value exists in the FSM's scope, so no leak is possible regardless of future
+edits. Keeping `track_id → node` state solely in the Search Radar process
+matches the domain — the wide-beam acquisition radar is the component that sees
+and selects targets. Leaving FCR single-target keeps it honest to its
+narrow-beam nature.
 
 ## Consequences
 
-- `Detection` is a small shared value type (`search_radar.py`) used by the
-  SearchRadar, the FSM, and the test stubs.
-- `track_id` is the projectile's index in the list passed to `SearchRadar`. The
-  list is built once and never reordered, so IDs are stable.
-- Re-cueing FCR onto a different target (a multi-projectile future) is a
-  controller responsibility — the controller holds nodes legitimately — not the
-  FSM's. This is the upgrade path; it does not change the membrane rule.
+- `Detection` and `track_id` are internal to `search_radar_controller`.
+- `SearchRadarLink` exposes only `get_cue() -> list[float] | None`.
+- `TrackFilter` receives FCR measurements only; Search Radar cues are not
+  filter measurements.
+- Multi-projectile target selection remains a Search Radar process
+  responsibility. The ATLAS FSM consumes only the chosen cue.

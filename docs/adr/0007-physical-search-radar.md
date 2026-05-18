@@ -1,12 +1,12 @@
 # ADR-0007: Physical Search Radar
 
-**Status:** Accepted
+**Status:** Accepted, revised by ADR-0009
 
 ## Decision
 
-The Search Radar is implemented as a dedicated Webots node with a world pose, a vertical-FOV gate, and a rotating scan beam. A track buffer to bridge beam sweeps is part of this increment and has been implemented. The radar model runs in-process inside the ATLAS controller. Giving the radar its own Webots controller and a radio link to the turret is deferred to a future increment.
+The Search Radar is implemented as a dedicated Webots node with a world pose, a vertical-FOV gate, and a rotating scan beam. A track buffer to bridge beam sweeps is part of this increment and has been implemented.
 
-The `Detection` output remains turret-relative (unchanged from the prior omniscient model) to keep the FSM and `TrackFilter` untouched.
+This ADR originally kept the radar model in-process inside the ATLAS controller. ADR-0009 revises that part: the Search Radar now runs in its own controller process and emits a selected world-frame cue over a radio link.
 
 ## Context
 
@@ -22,14 +22,13 @@ The task "Physical Search Radar" required grounding the radar's pose in the worl
 
 **Track buffer:** A small track buffer bridges beam sweeps by holding detections from recent timesteps, so targets do not vanish and reappear with each beam pass. This smooths the output without baking smoothing into the filter itself. The `track_timeout` parameter is accepted at construction and is active: the buffer ages tracks each `update()`, refreshes a re-detected track to age 0, and drops any track once `age > track_timeout`.
 
-**In-process model:** Running the radar simulation in the ATLAS controller keeps it in the same Python process and reduces coupling. A future increment (deferred) can extract this into a separate Webots controller with a radio link if needed for architectural isolation or realism.
+**Process model:** The original in-process model reduced coupling during the first physical-radar increment. ADR-0009 supersedes that choice with a separate Search Radar controller process and radio cue link.
 
-**Turret-relative output:** Keeping `Detection` turret-relative (not world-frame) avoids cascading changes to the FSM and `TrackFilter`, which expect positions in the turret's local frame. The coordinate transformation happens inside the SearchRadar class; downstream components remain untouched.
+**Cue output:** `Detection` and `track_id` state now stay inside the Search Radar process. The value crossing into ATLAS is a selected world-frame cue, not a turret-relative measurement.
 
 ## Consequences
 
 - `SearchRadar` now requires construction parameters: `radar_position` (world-frame `[x, y, z]` of the antenna phase centre), `max_range` (detection range gate in metres), `vertical_fov` (full vertical field of view in radians; gating is `|elevation| ≤ vertical_fov / 2`), `beam_width` (half-power beam width in radians), `scan_rate` (beam advance per update in radians), and `track_timeout` (number of consecutive missed updates before a track is dropped).
 - Detections are intermittent at the sensor level — targets are detected only when the rotating beam illuminates them. A track buffer bridges those gaps; the `track_timeout` parameter controls how many updates a track survives without re-detection.
 - A new `geometry.py` module of shared world-frame angle helpers was introduced: `azimuth_elevation_range()` (returns an `(azimuth, elevation, range)` triple) and `angle_diff()` (shortest signed angular difference). These compute world-frame geometry before the turret-relative transformation.
-- The FSM and `TrackFilter` remain untouched — they still receive turret-relative `Detection` values and have no visibility into world-frame geometry.
-- World-frame `Detection` output and the radio link (separate Webots controller for the radar) remain future increments.
+- ADR-0009 moves the radar model to its own Webots controller process and replaces turret-relative downstream `Detection` consumption with a world-frame radio cue.

@@ -10,15 +10,15 @@ Planned future subsystem. Analyses patterns across multiple engagements to estim
 
 ## Search Radar
 
-Wide-beam acquisition radar external to ATLAS. Implemented as a dedicated Webots node with a world pose and a vertical-FOV gate. Features a rotating scan beam that sweeps azimuthally, making detections intermittent at the sensor level; a track buffer bridges beam sweeps by holding recent detections and dropping a track after `track_timeout` updates without re-detection. Simulated in-process inside the ATLAS controller with added Gaussian noise to produce coarse, imprecise target cues. Outputs are turret-relative (matching FSM and Track Filter expectations). A future increment will extract the radar model into a separate Webots controller with a radio link. See ADR-0007.
+Wide-beam acquisition radar external to ATLAS. Implemented as a dedicated Webots controller process with its own world pose, vertical-FOV gate, rotating scan beam, and track buffer. It selects one target internally and emits that target's world-frame cue over an `Emitter` radio link. `track_id`s and node handles stay inside the Search Radar process; ATLAS receives only the latest cue position via `SearchRadarLink`. See ADR-0007 and ADR-0009.
 
 ## Fire-Control Radar (FCR)
 
-ATLAS's own narrow-beam on-board radar sensor. Provides precise target measurements to the Track Filter. Currently simulated with low-noise world position data as a placeholder — will be replaced with a real Webots sensor node in a future iteration. Distinct from the Search Radar: the FCR is part of ATLAS, the Search Radar is external to it.
+ATLAS's own narrow-beam on-board radar sensor, embodied by the turret. It is simulated, but no longer omniscient: each update is gated by range and by an FOV cone around the turret's commanded aim. When the Search Radar cue slews the turret onto the projectile, the FCR locks and reports low-noise turret-relative measurements to the Track Filter. It has no independent boresight or `set_target()` interface. See ADR-0008.
 
 ## ATLAS (Autonomous Tracking and Laser Aiming System)
 
-The cue-driven fire-control system being built. Receives coarse cues from the Search Radar, uses its own FCR to lock on precisely, fuses inputs via the Track Filter, and commands the turret via the FSM.
+The cue-driven fire-control system being built. Receives coarse world-frame cues from the Search Radar, slews the turret until its own FCR locks, filters FCR measurements via the Track Filter, and commands the turret via the FSM.
 
 ## Track Filter
 
