@@ -2,15 +2,15 @@
 
 Thin glue layer: constructs all components, wires them together, then runs
 the per-timestep loop. No logic lives here — all decision-making is inside
-the tested modules (FireControlRadar, SearchRadar, TrackFilter,
+the tested modules (FireControlRadar, SearchRadarLink, TrackFilter,
 BallisticTrajectoryPredictor, AtlasFSM). Projectile launch/reset is the only
 controller-level stateful behaviour (it is Webots-specific and untestable
 outside the runtime).
 
 Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
-  1. Sense   — search_radar.update(), fcr.update()
+  1. Sense   — cue_link.update(), fcr.update(turret_aim)
   2. Predict — track_filter.predict()
-  3. Fuse    — track_filter.update_fcr() and/or update_search() when available
+  3. Fuse    — track_filter.update_fcr() when FCR is locked
   4. Decide  — fsm.step()
   5. Manage  — projectile reset/relaunch independent of FSM
 """
@@ -22,7 +22,7 @@ from collections import deque
 from controller import Supervisor
 
 from fire_control_radar import FireControlRadar
-from search_radar import SearchRadar
+from search_radar_link import SearchRadarLink
 from track_filter import TrackFilter
 from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
 from projectile_system import ProjectileSystem
@@ -73,51 +73,42 @@ timestep = int(robot.getBasicTimeStep())
 # --- Devices ---
 pan = robot.getDevice("PAN_MOTOR")
 tilt = robot.getDevice("TILT_MOTOR")
-search_radar_node = robot.getFromDef("SEARCH_RADAR")
-if search_radar_node is None:
-    raise RuntimeError("Could not find DEF SEARCH_RADAR in the world file.")
 
-radar_position = search_radar_node.getPosition()
+# Receiver for Search Radar cues delivered over the inter-process radio link.
+# Must be enabled before constructing SearchRadarLink.
+receiver = robot.getDevice("FCR_CUE_RECEIVER")
+receiver.enable(timestep)
 
 # --- Scene nodes ---
 projectile = robot.getFromDef("PROJECTILE")
 if projectile is None:
     raise RuntimeError("Could not find DEF PROJECTILE in the world file.")
 
-radar_position = search_radar_node.getPosition()
 turret_position = (
     robot.getSelf().getPosition()
 )  # static snapshot — turret base never moves
 
 # --- Sensors ---
-# Tuning parameters: FCR is narrow-beam / precise; SearchRadar is wide-beam / coarse.
+# Tuning parameters: FCR is narrow-beam / precise; cue_link delivers coarse
+# world-frame cues from the separate Search Radar process.
 fcr = FireControlRadar(
     projectile,
-    turret_position,
-    noise_std=0.02,  # low noise — FCR is precise (metres std)
+    fcr_position=turret_position,   # FCR is co-located with the turret
+    turret_position=turret_position,
+    fov_half_angle=0.1,             # ~5.7° half-angle — narrow FCR beam
+    max_range=20.0,                 # metres — tune in Webots if needed
+    noise_std=0.02,                 # low noise — FCR is precise (metres std)
 )
-# FOV/scan values below are starting points — confirm and tune in Webots.
-search_radar = SearchRadar(
-    [projectile],  # list of all projectile nodes in the scene
-    turret_position,
-    radar_position,
-    noise_std=0.2,  # high noise — SearchRadar is coarse (metres std)
-    timestep_ms=timestep,
-    max_range=20.0,  # metres — starting value, tuned in Webots
-    vertical_fov=math.pi / 2,  # 90deg full vertical FOV — starting value
-    beam_width=0.35,  # rad — rotating beam width, starting value
-    scan_rate=0.15,  # rad per step — beam sweep speed, starting value
-    track_timeout=20,  # steps a track persists across beam sweeps
-)
+cue_link = SearchRadarLink(receiver)
 
 # --- State estimator ---
-# Tuning parameters chosen to match sensor noise characteristics.
-# R_fcr=0.001 (trusts FCR heavily), R_search=0.1 (down-weights wide-beam),
-# Q=0.01 (small process noise for near-ballistic motion).
+# R_fcr=0.001 (trusts FCR heavily); R_search retained as a constructor
+# parameter (TrackFilter still accepts it), but update_search() is gone —
+# only update_fcr() is called. Q=0.01 (small process noise, near-ballistic).
 track_filter = TrackFilter(
     timestep_ms=timestep,
     R_fcr=0.001,  # FCR measurement noise variance (m²) — low, trusted
-    R_search=0.1,  # SearchRadar noise variance (m²) — high, coarse
+    R_search=0.1,  # retained for TrackFilter constructor; update_search removed
     Q=0.01,  # process noise scale — small for near-ballistic motion
 )
 
@@ -126,7 +117,7 @@ ballistic_predictor = BallisticTrajectoryPredictor(track_filter, timestep_ms=tim
 
 # --- FSM wiring ---
 sensors = SensorSuite(
-    search_radar=search_radar,
+    cue_link=cue_link,
     fcr=fcr,
     track_filter=track_filter,
     ballistic_predictor=ballistic_predictor,
@@ -204,22 +195,21 @@ step_count = 0  # simulation steps elapsed — shown in telemetry
 while robot.step(timestep) != -1:
     step_count += 1
 
-    # 1. Sense — read both sensors
-    search_radar.update()
-    fcr.update()
+    # 1. Sense — drain the cue link and update the FCR with the turret's
+    #    current aim. The FCR gates detection against the boresight, so it
+    #    must be fed the aim angles the FSM last commanded.
+    cue_link.update()
+    fcr.update(*fsm.commanded_aim)
 
     # 2. Predict — propagate Kalman state forward one timestep
     track_filter.predict()
 
-    # 3. Fuse — update filter with whichever measurements are available.
-    #    Both are None before their respective sensors have locked a target.
+    # 3. Fuse — update filter with FCR measurement when locked.
+    #    The Search Radar is a separate process; it cues the FSM via the
+    #    radio link but no longer feeds the TrackFilter directly.
     fcr_pos = fcr.get_target_position()
     if fcr_pos is not None:
         track_filter.update_fcr(fcr_pos)
-
-    search_pos = search_radar.get_target_position()
-    if search_pos is not None:
-        track_filter.update_search(search_pos)
 
     # 4. Decide — advance FSM one step
     fsm.step()

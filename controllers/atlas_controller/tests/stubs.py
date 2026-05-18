@@ -94,9 +94,6 @@ class StubTrackFilter:
     def update_fcr(self, m):
         pass
 
-    def update_search(self, m):
-        pass
-
     def reset(self):
         pass
 
