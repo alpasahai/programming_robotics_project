@@ -1,5 +1,9 @@
 # FCR Rework and Cue Handoff — Implementation Plan
 
+> **⚠️ SUPERSEDED — do not execute.** This plan predates PR #18 (turret reframed
+> as the FCR body) and the arrival of `search_radar_controller` as a separate
+> process. Use `docs/superpowers/plans/2026-05-18-fcr-rework-cue-handoff-revised.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the Fire-Control Radar into a physically grounded, FOV-gated slewing tracker that is cued onto the target by the Search Radar, so the FSM's `ACQUIRE` and `TRACK` states reflect real sensor geometry.
@@ -27,9 +31,10 @@
 
 Each task carries a **Model · Effort** tag. Same policy as Increment 1's plan — cheapest model and lowest reasoning effort that won't degrade quality.
 
-- **Model:** `haiku` = mechanical/fully-specified; `sonnet` = moderate reasoning (class rewrites, non-trivial logic, proto syntax); `opus` = judgment calls and cross-cutting changes.
+- **Model:** `haiku` (Codex: `gpt-5.4-mini`) = mechanical/fully-specified; `sonnet` (Codex: `gpt-5.4`) = moderate reasoning (class rewrites, non-trivial logic, proto syntax); `opus` (Codex: `gpt-5.5`) = judgment calls and cross-cutting changes.
 - **Effort:** `low` = transcription-level; `medium` = design small logic within a clear spec; `high` = reason through edge cases / cross-file effects.
 - **The orchestrator is always Opus, and every between-task review is done by Opus**, regardless of a task's execution tag.
+- **Codex orchestration:** If you're Codex and you're orchestrating this plan, use the Codex models instead: `gpt-5.5` for the orchestrator/reviews, `gpt-5.4` where the plan says `sonnet`, and `gpt-5.4-mini` where the plan says `haiku`.
 - **Tuning is never delegated to haiku** — Webots parameter tuning is orchestrator (Opus) or human.
 - A subagent that hits ambiguity or an under-specified step stops and escalates to the orchestrator rather than guessing.
 
@@ -58,7 +63,7 @@ This plan skews higher than Increment 1: it touches the FSM and reconciles ADRs,
 
 ## Task 1 — FCR gains a pose and FOV cone
 
-**Model: sonnet · Effort: medium** — class rewrite plus a new `geometry.angular_separation` helper; interface care.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — class rewrite plus a new `geometry.angular_separation` helper; interface care.
 
 **Required:** The FCR must know its own world position and detect the projectile only when it is inside a narrow FOV cone and within range — not unconditionally as today.
 
@@ -84,7 +89,7 @@ This plan skews higher than Increment 1: it touches the FSM and reconciles ADRs,
 
 ## Task 2 — Slewing boresight
 
-**Model: sonnet · Effort: medium** — bounded-rate angle stepping with clamping; small but easy to get wrong.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — bounded-rate angle stepping with clamping; small but easy to get wrong.
 
 **Required:** The FCR boresight must move toward where it is told to look, at a bounded rate — it cannot snap instantly onto a target.
 
@@ -101,7 +106,7 @@ This plan skews higher than Increment 1: it touches the FSM and reconciles ADRs,
 
 ## Task 3 — Cue interface and closed-loop tracking
 
-**Model: sonnet · Effort: medium** — the closed-loop slew-target swap (cue vs. measured direction) is the trickiest pure-Python logic in this plan; warrants a careful Opus review afterward.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — the closed-loop slew-target swap (cue vs. measured direction) is the trickiest pure-Python logic in this plan; warrants a careful Opus (Codex: `gpt-5.5`) review afterward.
 
 **Required:** Something must point the FCR at the target, and once locked the FCR must keep itself centred on a *moving* target rather than drifting back to a stale cue.
 
@@ -121,7 +126,7 @@ This plan skews higher than Increment 1: it touches the FSM and reconciles ADRs,
 
 ## Task 4 — Cue handoff in the FSM
 
-**Model: opus · Effort: medium** — modifies the central FSM and supersedes an ADR-0006 clause; cross-cutting, sensitive, not for a cheaper model.
+**Model: opus (Codex: `gpt-5.5`) · Effort: medium** — modifies the central FSM and supersedes an ADR-0006 clause; cross-cutting, sensitive, not for a cheaper model.
 
 **Required:** The FSM must hand the Search Radar's detection of the chosen target to the FCR so the FCR knows where to slew. Today `_do_acquire` deliberately does not touch the FCR (ADR-0006); that clause is now superseded.
 
@@ -141,7 +146,7 @@ This plan skews higher than Increment 1: it touches the FSM and reconciles ADRs,
 
 ## Task 5 — FireControlRadar PROTO and world instantiation
 
-**Model: sonnet · Effort: medium** — Webots PROTO/`.wbt` syntax; match #9 conventions and the SearchRadar proto.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — Webots PROTO/`.wbt` syntax; match #9 conventions and the SearchRadar proto.
 
 **Required:** A physically visible FCR in the scene.
 
@@ -160,7 +165,7 @@ This plan skews higher than Increment 1: it touches the FSM and reconciles ADRs,
 
 ## Task 6 — Wire the FCR model to the node
 
-**Model: sonnet · Effort: low** for the controller edit. **The verification/tuning step is orchestrator (Opus, effort: medium) or human** — converging `fov_half_angle`/`slew_rate` so `ACQUIRE` has real but bounded duration is iterative judgment.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: low** for the controller edit. **The verification/tuning step is orchestrator (Opus; Codex: `gpt-5.5`, effort: medium) or human** — converging `fov_half_angle`/`slew_rate` so `ACQUIRE` has real but bounded duration is iterative judgment.
 
 **Required:** The controller must construct the new FCR with the real node pose and FOV/slew parameters, and the cue path must be live.
 
@@ -179,7 +184,7 @@ This plan skews higher than Increment 1: it touches the FSM and reconciles ADRs,
 
 ## Task 7 — Documentation
 
-**Model: split.** ADR-0008 authoring and the CONTEXT.md rewrite: **haiku · Effort: low** (content drafted below). Resolving the duplicate ADR-0003 and revising ADR-0006: **opus · Effort: medium** — these are judgment calls about which design stands and how to renumber, not transcription.
+**Model: split.** ADR-0008 authoring and the CONTEXT.md rewrite: **haiku (Codex: `gpt-5.4-mini`) · Effort: low** (content drafted below). Resolving the duplicate ADR-0003 and revising ADR-0006: **opus (Codex: `gpt-5.5`) · Effort: medium** — these are judgment calls about which design stands and how to renumber, not transcription.
 
 **Required:** Record the new FCR design and reconcile the affected ADRs.
 

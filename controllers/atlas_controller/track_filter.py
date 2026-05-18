@@ -119,7 +119,7 @@ class TrackFilter:
 
         Applies gravity as a control input u = [0, 0, -9.81] m/s² through
         the B matrix, decoupling gravity from the state vector. Call once
-        per timestep, before any update_fcr() or update_search() calls.
+        per timestep, before any update_fcr() calls.
         """
         u = np.array([[0.0], [0.0], [_GRAVITY]])
         self.kf.predict(u=u)
@@ -135,21 +135,6 @@ class TrackFilter:
                          in metres, Z-up ENU frame.
         """
         self.kf.R = np.eye(3) * self._R_fcr
-        self.kf.update(np.array(measurement, dtype=float).reshape(3, 1))
-        self._initialised = True
-
-    def update_search(self, measurement: list[float]) -> None:
-        """Fuse a SearchRadar measurement into the filter.
-
-        Sets kf.R to R_search * I₃ (high noise — SearchRadar is coarse)
-        before calling the Kalman update step, then marks the filter as
-        initialised.
-
-        Args:
-            measurement: Turret-relative [dx, dy, dz] from SearchRadar,
-                         in metres, Z-up ENU frame.
-        """
-        self.kf.R = np.eye(3) * self._R_search
         self.kf.update(np.array(measurement, dtype=float).reshape(3, 1))
         self._initialised = True
 
@@ -191,7 +176,7 @@ class TrackFilter:
         return [float(self.kf.x[3, 0]), float(self.kf.x[4, 0]), float(self.kf.x[5, 0])]
 
     def is_initialised(self) -> bool:
-        """Return True after at least one update_fcr() or update_search() call.
+        """Return True after at least one update_fcr() call.
 
         The FSM checks this before trusting get_position() or get_velocity().
         Returns False on construction and after reset().

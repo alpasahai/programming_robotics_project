@@ -1,6 +1,6 @@
 # ADR-0002: Kalman Filter for Both Tracking and Prediction
 
-**Status:** Accepted  
+**Status:** Accepted, revised by ADR-0009  
 **Supersedes:** ADR-0002-parabolic-prediction-before-kalman.md
 
 ## Decision
@@ -14,10 +14,9 @@ curve fitting (numpy polyfit) is not used.
 The original plan deferred the Kalman filter in favour of a parabolic fit on raw
 FCR position history. Two reasons forced the change:
 
-1. **Sensor fusion requirement** — the assignment's Embedded Intelligence
-   specialisation requires sensor fusion. A Kalman filter with two measurement
-   sources (FCR + SearchRadar, each with their own R matrix) is genuine
-   mathematical fusion. A parabola fit on a single sensor's history is not.
+1. **Filtering requirement** — the tracking path needs a state estimator that
+   smooths noisy FCR measurements and estimates velocity. A parabola fit on raw
+   position history treats measurement noise as signal.
 
 2. **Prediction quality** — polyfit on noisy positions fits noise as signal.
    Residuals grow quadratically with noise variance. The Kalman filter's
@@ -29,8 +28,9 @@ FCR position history. Two reasons forced the change:
 **TrackFilter** uses a 6-state Kalman filter `[x, y, z, vx, vy, vz]`:
 - State transition F encodes constant velocity; gravity enters as a control
   input `u = [0, 0, -9.81]` via the B matrix each predict step.
-- Two measurement update paths: `update_fcr()` (low R) and `update_search()`
-  (high R). Both run every timestep — continuous fusion.
+- One measurement update path: `update_fcr()`. ADR-0009 removed continuous
+  Search Radar measurement fusion; Search Radar now supplies acquisition cues,
+  not TrackFilter measurements.
 
 **BallisticTrajectoryPredictor** does not run the Kalman predict step. It reads
 `get_position()` and `get_velocity()` from TrackFilter and applies closed-form

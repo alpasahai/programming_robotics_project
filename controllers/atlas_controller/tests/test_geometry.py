@@ -7,7 +7,7 @@ wrapped to (-π, π].
 """
 import math
 import pytest
-from geometry import azimuth_elevation_range, angle_diff
+from geometry import azimuth_elevation_range, angle_diff, angular_separation
 
 
 # ---------------------------------------------------------------------------
@@ -228,3 +228,62 @@ def test_realistic_search_scenario():
     assert az == pytest.approx(expected_az, abs=1e-9)
     assert el == pytest.approx(expected_el, abs=1e-9)
     assert r == pytest.approx(expected_r, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Slice 6: angular_separation — great-circle angle between two (az, el) pairs
+# ---------------------------------------------------------------------------
+
+def test_angular_separation_same_direction_is_zero():
+    """Two identical (az, el) pairs point in the same direction → separation = 0."""
+    az = math.pi / 4
+    el = math.pi / 6
+    assert angular_separation(az, el, az, el) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_angular_separation_north_vs_east_is_pi_half():
+    """North (az=0, el=0) and East (az=π/2, el=0) are 90° apart → separation = π/2."""
+    az1, el1 = 0.0, 0.0          # due North (dx=0, dy=1, dz=0)
+    az2, el2 = math.pi / 2, 0.0  # due East  (dx=1, dy=0, dz=0)
+    sep = angular_separation(az1, el1, az2, el2)
+    assert sep == pytest.approx(math.pi / 2, abs=1e-9)
+
+
+def test_angular_separation_antipodal_is_pi():
+    """Opposite directions (az=0, el=0) vs (az=π, el=0) → separation = π."""
+    sep = angular_separation(0.0, 0.0, math.pi, 0.0)
+    assert sep == pytest.approx(math.pi, abs=1e-9)
+
+
+def test_angular_separation_perpendicular_via_elevation():
+    """Horizon (az=0, el=0) vs straight up (az=0, el=π/2) → separation = π/2."""
+    sep = angular_separation(0.0, 0.0, 0.0, math.pi / 2)
+    assert sep == pytest.approx(math.pi / 2, abs=1e-9)
+
+
+def test_angular_separation_is_symmetric():
+    """angular_separation(a, b) == angular_separation(b, a) for arbitrary angles."""
+    az1, el1 = 0.3, 0.4
+    az2, el2 = 1.1, -0.2
+    assert angular_separation(az1, el1, az2, el2) == pytest.approx(
+        angular_separation(az2, el2, az1, el1), abs=1e-9
+    )
+
+
+def test_angular_separation_small_angle():
+    """Two directions very close together → separation ≈ their Euclidean angular gap."""
+    delta = 1e-4  # very small offset
+    sep = angular_separation(0.0, 0.0, delta, 0.0)
+    assert sep == pytest.approx(delta, abs=1e-6)
+
+
+def test_angular_separation_result_always_nonnegative():
+    """angular_separation never returns a negative value."""
+    pairs = [
+        (0.0, 0.0, 0.0, 0.0),
+        (math.pi, 0.0, -math.pi, 0.0),
+        (1.5, 0.3, -0.7, -0.9),
+    ]
+    for az1, el1, az2, el2 in pairs:
+        sep = angular_separation(az1, el1, az2, el2)
+        assert sep >= 0.0, f"negative separation for ({az1},{el1},{az2},{el2}): {sep}"

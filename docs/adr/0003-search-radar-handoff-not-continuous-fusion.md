@@ -1,10 +1,13 @@
 # ADR-0003: Search Radar as Acquisition Cue Only, Not Continuous Fusion
 
-**Status:** Superseded by [ADR-0003-continuous-kalman-fusion-both-sensors.md](0003-continuous-kalman-fusion-both-sensors.md)
+**Status:** Accepted
+**Related rejected alternative:** [ADR-0010](0010-rejected-continuous-kalman-fusion-both-sensors.md)
 
 ## Decision
 
-The Search Radar drives SEARCH and ACQUIRE states only. Once the FCR achieves lock, the FSM transitions to TRACK and the Search Radar cue is no longer used. There is no continuous blending of Search Radar and FCR data.
+The Search Radar drives `SEARCH` and `ACQUIRE` only. Once the FCR achieves
+lock, the FSM transitions to `TRACK` and the Search Radar cue is no longer used
+for filtering. There is no continuous blending of Search Radar and FCR data.
 
 ## Context
 
@@ -17,6 +20,10 @@ Two sensor fusion approaches were considered:
 
 The hard handoff is simpler to implement and matches the real system architecture: search radars cue fire-control radars, which then track independently. The fusion story is architectural ("two inputs, defined handoff") rather than mathematical, and is easier to explain under assessor questioning.
 
-## Planned upgrade
+## Current revision
 
-Continuous Kalman filter fusion will be added in a future iteration. The Search Radar measurement will enter the Kalman update step with a high noise covariance R, and the FCR with a low R — the filter will naturally weight the FCR more heavily once locked. See ADR-0002 for the Kalman upgrade path on the prediction side. The FSM and Track Report interface will not change.
+The revised two-process design strengthens the handoff. Search Radar runs in a
+separate controller process and emits only a selected world-frame cue over the
+radio link. ATLAS uses that cue to slew the turret. The FCR is the turret-aim
+sensor and feeds the Track Filter after lock. Continuous Search Radar
+measurement fusion is rejected in ADR-0010.

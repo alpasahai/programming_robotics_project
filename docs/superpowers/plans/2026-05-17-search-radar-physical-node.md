@@ -29,9 +29,10 @@
 Each task carries a **Model · Effort** tag for the subagent that executes it. Goal: cheapest model and lowest reasoning effort that will not degrade quality.
 
 **Model** — capability tier:
-- **haiku** — fully specified, mechanical, self-contained. Tests/interfaces are pinned by the plan; little judgment needed.
-- **sonnet** — moderate reasoning: rewriting a class under an interface-preservation constraint, non-trivial logic, Webots/proto syntax.
-- **opus** — judgment calls, cross-cutting changes, ambiguity. Also: **the orchestrator is always Opus**, and **every between-task review is done by Opus** regardless of the task's execution model.
+- **haiku** (Codex: `gpt-5.4-mini`) — fully specified, mechanical, self-contained. Tests/interfaces are pinned by the plan; little judgment needed.
+- **sonnet** (Codex: `gpt-5.4`) — moderate reasoning: rewriting a class under an interface-preservation constraint, non-trivial logic, Webots/proto syntax.
+- **opus** (Codex: `gpt-5.5`) — judgment calls, cross-cutting changes, ambiguity. Also: **the orchestrator is always Opus**, and **every between-task review is done by Opus** regardless of the task's execution model.
+- **Codex orchestration:** If you're Codex and you're orchestrating this plan, use the Codex models instead: `gpt-5.5` for the orchestrator/reviews, `gpt-5.4` where the plan says `sonnet`, and `gpt-5.4-mini` where the plan says `haiku`.
 
 **Effort** — how much reasoning the subagent spends, set independently of model:
 - **low** — transcription-level: the plan dictates the code/content; follow it.
@@ -62,7 +63,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 1 — Geometry helpers
 
-**Model: haiku · Effort: low** — pure functions, tests fully specified in the plan, no judgment.
+**Model: haiku (Codex: `gpt-5.4-mini`) · Effort: low** — pure functions, tests fully specified in the plan, no judgment.
 
 **Required:** Both radars need to reason about a target's direction relative to a sensor pose. There is no shared place for that today (the FSM inlines its own `atan2` math). Extract it once so both this plan and the FCR plan reuse it.
 
@@ -82,7 +83,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 2 — SearchRadar gains a pose and FOV gate
 
-**Model: sonnet · Effort: medium** — class rewrite under a hard interface-preservation constraint (`Detection` output unchanged); needs care, not just transcription.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — class rewrite under a hard interface-preservation constraint (`Detection` output unchanged); needs care, not just transcription.
 
 **Required:** The radar must know its own world position and detect a projectile only when it is in range and within the vertical field of view — not omnisciently as today.
 
@@ -105,7 +106,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 3 — Rotating scan beam
 
-**Model: haiku · Effort: low** — small, well-specified addition (advance an angle, gate on it).
+**Model: haiku (Codex: `gpt-5.4-mini`) · Effort: low** — small, well-specified addition (advance an angle, gate on it).
 
 **Required:** Detection should depend on a sweeping beam, not cover all azimuths at once.
 
@@ -124,7 +125,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 4 — Track buffer persistence
 
-**Model: sonnet · Effort: medium** — ageing/refresh/expiry logic with an off-by-one risk; moderate reasoning.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — ageing/refresh/expiry logic with an off-by-one risk; moderate reasoning.
 
 **Required:** A rotating beam covers a target only intermittently. The FSM (`fsm.py:_do_search`) needs `acquire_frames` *consecutive* detections to leave `SEARCH`; flickering detections would reset that counter and the FSM would never transition. Real search radars hold a track between beam passes — model that.
 
@@ -141,7 +142,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 5 — SearchRadar PROTO and world instantiation
 
-**Model: sonnet · Effort: medium** — Webots PROTO/`.wbt` syntax; must match conventions #9 produced (inspect an existing proto first).
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — Webots PROTO/`.wbt` syntax; must match conventions #9 produced (inspect an existing proto first).
 
 **Required:** A physically visible radar in the scene. Per issue #9 the scene structures are PROTO files.
 
@@ -161,7 +162,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 6 — Wire the SearchRadar model to the node
 
-**Model: sonnet · Effort: low** for the controller edit (small, mechanical). **The verification/tuning step is orchestrator (Opus, effort: medium) or human** — converging FOV/scan/`track_timeout`/placement until the FSM transitions is iterative judgment, not a haiku task.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: low** for the controller edit (small, mechanical). **The verification/tuning step is orchestrator (Opus; Codex: `gpt-5.5`, effort: medium) or human** — converging FOV/scan/`track_timeout`/placement until the FSM transitions is iterative judgment, not a haiku task.
 
 **Required:** The controller must give the `SearchRadar` model the real node pose and the FOV/scan parameters.
 
@@ -179,7 +180,7 @@ Each task carries a **Model · Effort** tag for the subagent that executes it. G
 
 ## Task 7 — Documentation
 
-**Model: haiku · Effort: low** — ADR/CONTEXT.md content is already drafted in this task; mechanical authoring.
+**Model: haiku (Codex: `gpt-5.4-mini`) · Effort: low** — ADR/CONTEXT.md content is already drafted in this task; mechanical authoring.
 
 **Required:** Record the decision and fix the glossary contradiction issue #8 flagged.
 

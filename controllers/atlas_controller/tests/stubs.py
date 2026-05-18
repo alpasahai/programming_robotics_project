@@ -36,55 +36,51 @@ class StubRadar:
 
 
 class StubFCR:
-    def __init__(self, position, noise_std=0.0):
-        self._position = position
+    """Test double for FireControlRadar.
 
-    def update(self):
-        pass
+    Reworked for the cue-handoff FSM: ``set_target`` is gone (the real FCR is
+    cued at construction). ``update(az, el)`` accepts the turret boresight.
+    ``is_locked()`` returns a configurable lock flag, defaulting to True.
+    """
+
+    def __init__(self, position, noise_std=0.0, locked=True):
+        self._position = position
+        self._locked = locked
+        self.update_calls = []
+
+    def update(self, boresight_az=0.0, boresight_el=0.0):
+        """Record the commanded boresight. No gating is simulated."""
+        self.update_calls.append((boresight_az, boresight_el))
 
     def get_target_position(self):
         return list(self._position)
 
-    def set_target(self, node):
-        """No-op. FCR accepts a Webots node (not a track_id) and is not called by the FSM — see ADR-0006."""
-        pass
+    def is_locked(self):
+        """Return the configured lock flag (default True)."""
+        return self._locked
 
 
-class StubSearchRadar:
-    """Test double for SearchRadar.
+class StubCueLink:
+    """Test double for SearchRadarLink.
 
-    Accepts a list of Detection objects at construction and returns them from
-    get_detections(). Implements the same interface as the real SearchRadar
-    without any Webots dependency.
-
-    See ADR-0006: set_target() accepts an integer track_id (no-op here).
-    get_target_position() returns the first detection's position, or None.
+    ``get_cue()`` returns a configurable world-frame cue ``[x, y, z]`` or
+    ``None``. ``update()`` is a no-op. The cue can be reassigned between steps
+    (set ``.cue``) to simulate the link going briefly silent.
     """
 
-    def __init__(self, detections):
+    def __init__(self, cue=None):
         """
         Args:
-            detections: list of Detection objects (from search_radar.Detection)
-                        to return from get_detections().
+            cue: world-frame [x, y, z] returned by get_cue(), or None.
         """
-        self._detections = list(detections)
+        self.cue = cue
 
     def update(self):
         pass
 
-    def get_detections(self):
-        """Return a copy of the configured Detection list."""
-        return list(self._detections)
-
-    def get_target_position(self):
-        """Return the position of the first detection, or None if the list is empty."""
-        if not self._detections:
-            return None
-        return list(self._detections[0].position)
-
-    def set_target(self, track_id):
-        """No-op. Accepts the integer track_id per ADR-0006."""
-        pass
+    def get_cue(self):
+        """Return the configured world-frame cue, or None."""
+        return self.cue
 
 
 class StubTrackFilter:
@@ -96,9 +92,6 @@ class StubTrackFilter:
         pass
 
     def update_fcr(self, m):
-        pass
-
-    def update_search(self, m):
         pass
 
     def reset(self):

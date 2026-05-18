@@ -3,7 +3,7 @@ import math
 import random
 
 from stubs import StubProjectile
-from search_radar import Detection, SearchRadar
+from search_radar import Detection, RadarBeamVisualSpec, SearchRadar
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +570,36 @@ def test_target_within_beam_is_detected():
     detections = radar.get_detections()
     assert len(detections) == 1
     assert detections[0].track_id == 0
+
+
+def test_beam_visual_spec_matches_software_fov_gates():
+    """The render spec must come from the same gates used by detection."""
+    proj = StubProjectile([[0.0, 100.0, 0.0]])
+    radar = _make_radar(
+        [proj],
+        radar_position=[1.0, 2.0, 3.0],
+        turret_position=[0.0, 0.0, 0.0],
+        max_range=20.0,
+        vertical_fov=math.radians(90),
+        beam_width=math.radians(20),
+        scan_rate=0.0,
+    )
+    radar._beam_azimuth = math.radians(45)
+
+    spec = radar.get_beam_visual_spec()
+
+    assert isinstance(spec, RadarBeamVisualSpec)
+    assert spec.origin_world == [1.0, 2.0, 3.0]
+    assert spec.centre_azimuth == math.radians(45)
+    assert spec.max_range == 20.0
+    assert spec.beam_width == math.radians(20)
+    assert spec.vertical_fov == math.radians(90)
+    assert spec.half_angle == math.radians(10)
+    assert spec.cone_height == 20.0
+    assert abs(spec.cone_radius - math.tan(math.radians(10)) * 20.0) < 1e-9
+    assert spec.cone_center_local == [0.0, 10.0, 0.0]
+    assert radar._is_inside_beam_cone([1.0 + math.sin(math.radians(45)) * 10.0, 2.0 + math.cos(math.radians(45)) * 10.0, 3.0])
+    assert not radar._is_inside_beam_cone([1.0 + math.sin(math.radians(45)) * 25.0, 2.0 + math.cos(math.radians(45)) * 25.0, 3.0])
 
 
 def test_beam_sweep_discovers_target_then_loses_it():

@@ -1,2 +1,5 @@
 [python]
 COMMAND = C:\path\to\python.exe
+
+[environment variables with paths]
+PYTHONPATH = $(PYTHONPATH):../../lib

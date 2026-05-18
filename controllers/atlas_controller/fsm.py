@@ -20,7 +20,7 @@ class SensorSuite:
     stub implementations for each field.
     """
 
-    search_radar: object  # SearchRadar
+    cue_link: object  # SearchRadarLink — world-frame cues over the radio link
     fcr: object  # FireControlRadar
     track_filter: object  # TrackFilter
     ballistic_predictor: object  # BallisticTrajectoryPredictor
@@ -76,9 +76,10 @@ class AtlasFSM:
 
     States
     ------
-    SEARCH   : Pan sweep. SearchRadar scans for detections.
-    ACQUIRE  : Target selected. FCR, SearchRadar, and TrackFilter locked onto
-               chosen node. Waits for TrackFilter to initialise.
+    SEARCH   : Pan sweep. Waits for Search Radar cues over the radio link.
+    ACQUIRE  : Cue received. Turret slews toward the cued world position and
+               the TrackFilter is reset. Waits for the FCR to lock and the
+               TrackFilter to initialise.
     TRACK    : TrackFilter fusing both sensors. Turret follows filtered position.
                Waits for MIN_TRACK_FRAMES before attempting PREDICT.
     PREDICT  : BallisticTrajectoryPredictor computes intercept point. Validates
@@ -90,10 +91,9 @@ class AtlasFSM:
 
     Sensor fusion
     -------------
-    Both FCR and SearchRadar feed the TrackFilter every timestep throughout
-    all states (continuous fusion). FCR dominates due to lower R. The FSM
-    does not gate sensors — it only calls set_target() at ACQUIRE to lock
-    both sensors onto the chosen node.
+    The FCR feeds the TrackFilter every timestep (continuous fusion). The
+    Search Radar runs as a separate process and reaches the FSM only as a
+    world-frame cue over the radio link, consumed by SEARCH and ACQUIRE.
 
     Coordinate system: Z-up ENU.
         pan  = atan2(dx, dy)
@@ -130,7 +130,7 @@ class AtlasFSM:
         self.state = self.SEARCH
 
         # SEARCH bookkeeping
-        self._detection_count = 0  # consecutive steps with at least one detection
+        self._detection_count = 0  # consecutive steps with a non-None cue from the cue link
         self._pan_angle = 0.0  # current pan motor angle (radians)
         self._pan_direction = 1  # +1 sweeping positive, -1 sweeping negative
 
@@ -144,7 +144,7 @@ class AtlasFSM:
         self._last_pan_cmd = 0.0
 
         # ACQUIRE bookkeeping
-        self._target = None  # selected target (detection position vector)
+        self._target = None  # cued target — world-frame position [x, y, z]
         self._acquire_entry_done = False  # guard: entry actions fire exactly once
 
         # TRACK bookkeeping
@@ -162,9 +162,9 @@ class AtlasFSM:
         """Advance FSM by one timestep.
 
         Executes the active state's logic and commands motors. Call once per
-        simulation step, after search_radar.update(), fcr.update(),
-        track_filter.predict(), track_filter.update_fcr(), and
-        track_filter.update_search() have all been called in the main loop.
+        simulation step, after cue_link.update(), fcr.update(),
+        track_filter.predict(), and track_filter.update_fcr() have all been
+        called in the main loop.
         """
         if self.state == self.SEARCH:
             self._do_search()
@@ -181,6 +181,20 @@ class AtlasFSM:
         elif self.state == self.RESET:
             self._do_reset()
 
+    @property
+    def commanded_aim(self) -> tuple[float, float]:
+        """Return the turret aim last commanded to the motors as ``(pan, tilt)``.
+
+        Both angles are in radians, Z-up ENU (pan = azimuth, tilt = elevation).
+        The values are whatever ``_aim_at`` (or the SEARCH pan sweep) last sent
+        to the motors; before any command is issued they are ``(0.0, 0.0)``.
+
+        The controller reads this each sense phase to feed the FCR its
+        boresight: ``fcr.update(*fsm.commanded_aim)``. A one-step lag is
+        acceptable — the motor is mid-slew anyway.
+        """
+        return (self._commanded_pan, self._commanded_tilt)
+
     # --------------------------------------------------------- state handlers
 
     def _do_search(self) -> None:
@@ -190,11 +204,11 @@ class AtlasFSM:
         +search_pan_limit, advancing search_speed radians per step and
         reversing direction when a limit is reached.
 
-        Simultaneously reads search_radar detections and counts consecutive
-        steps that contain at least one detection. Any step with no detections
-        resets the counter to zero. When the count reaches acquire_frames the
-        first detection is selected as the target and the FSM transitions to
-        ACQUIRE.
+        Simultaneously reads the latest Search Radar cue from the cue link and
+        counts consecutive steps that carry a non-None cue. Any step with no
+        cue resets the counter to zero. When the count reaches acquire_frames
+        the cue (a world-frame [x, y, z] position) is stored as self._target
+        and the FSM transitions to ACQUIRE.
         """
         # --- pan sweep ---
         self._pan_angle += self._pan_direction * self.config.search_speed
@@ -209,9 +223,11 @@ class AtlasFSM:
             self._pan_direction = 1
 
         self.hardware.pan_motor.setPosition(self._pan_angle)
-        # Keep the unwrap reference current so the first TRACK aim unwraps
-        # relative to where the sweep actually left the pan motor.
+        # Keep the unwrap reference current so the first ACQUIRE aim unwraps
+        # relative to where the sweep actually left the pan motor. Also keep
+        # _commanded_pan current so commanded_aim reflects the live sweep.
         self._last_pan_cmd = self._pan_angle
+        self._commanded_pan = self._pan_angle
         _motor_log.debug(
             "[SEARCH sweep] pan_motor.setPosition(%.4f rad)  dir=%+d  limit=%.4f",
             self._pan_angle,
@@ -219,44 +235,50 @@ class AtlasFSM:
             limit,
         )
 
-        # --- detection counting ---
-        detections = self.sensors.search_radar.get_detections()
-        if detections:
+        # --- cue counting ---
+        cue = self.sensors.cue_link.get_cue()
+        if cue is not None:
             self._detection_count += 1
         else:
             self._detection_count = 0
 
         if self._detection_count >= self.config.acquire_frames:
-            self._target = detections[0].track_id
+            # Store the world-frame cue; _world_to_relative converts it to turret-relative each ACQUIRE step.
+            self._target = cue
             self._transition(self.ACQUIRE)
 
     def _do_acquire(self) -> None:
         """Execute one timestep of ACQUIRE state logic.
 
-        Entry (first call only): locks the SearchRadar onto the selected
-        target via ``search_radar.set_target(track_id)`` and resets the
-        TrackFilter. These entry actions fire exactly once, guarded by
-        ``_acquire_entry_done``.
+        Entry (first call only): resets the TrackFilter. This fires exactly
+        once, guarded by ``_acquire_entry_done``.
 
-        FCR is NOT re-targeted here. Per ADR-0006 the Fire-Control Radar is
-        single-target and cued at construction; the FSM does not call
-        ``fcr.set_target``. Only the SearchRadar (wide-beam) is locked by the
-        FSM at ACQUIRE.
+        Each step: reads the latest Search Radar cue from the cue link, converts
+        the world-frame cue to a turret-relative bearing, and slews the turret
+        motors toward it via ``_aim_at``. The real motors slew at maxVelocity,
+        so the turret converges over several steps. If the cue link is briefly
+        silent (``get_cue()`` returns None) the FSM holds its last aim and does
+        not error.
 
-        Each step: checks ``track_filter.is_initialised()``. When True,
-        transitions to TRACK.
+        Transitions to TRACK when ``fcr.is_locked()`` AND
+        ``track_filter.is_initialised()`` are both True — the FCR has the
+        target inside its narrow FOV cone and the Kalman filter has a usable
+        estimate.
 
-        ``self._target`` holds an integer ``track_id`` (ADR-0006) — never a
-        Webots node handle.
-
-        See ADR-0006 for the sensor-membrane and track-id identity contract.
+        Note: the older ADR-0006 clause about a ``set_target`` call at ACQUIRE
+        is superseded by the cue-handoff rework — the FCR is cued at
+        construction and the Search Radar is a separate process reached only
+        through the cue link. The ADRs are reconciled in a later task.
         """
         if not self._acquire_entry_done:
-            self.sensors.search_radar.set_target(self._target)
             self.sensors.track_filter.reset()
             self._acquire_entry_done = True
 
-        if self.sensors.track_filter.is_initialised():
+        cue = self.sensors.cue_link.get_cue()
+        if cue is not None:
+            self._aim_at(self._world_to_relative(cue))
+
+        if self.sensors.fcr.is_locked() and self.sensors.track_filter.is_initialised():
             self._transition(self.TRACK)
 
     def _do_track(self) -> None:
@@ -338,10 +360,10 @@ class AtlasFSM:
             + (desired_tilt - self._commanded_tilt) ** 2
         )
 
-        # Command motors and record what we sent
+        # Command motors. _aim_at records the angles it sent on
+        # _commanded_pan / _commanded_tilt, so the next step's error is
+        # measured against this step's command.
         self._aim_at(self._intercept)
-        self._commanded_pan = desired_pan
-        self._commanded_tilt = desired_tilt
 
         if error < self.config.aim_error_threshold:
             self._transition(self.ENGAGING)
@@ -430,6 +452,10 @@ class AtlasFSM:
 
         self.hardware.pan_motor.setPosition(pan)
         self.hardware.tilt_motor.setPosition(tilt)
+        # Record what was actually commanded so commanded_aim can feed the FCR
+        # its boresight and so _do_aim can measure convergence.
+        self._commanded_pan = pan
+        self._commanded_tilt = tilt
         _motor_log.debug(
             "[%s aim] target_rel=[%.3f, %.3f, %.3f] -> "
             "pan_motor.setPosition(%.4f rad)  tilt_motor.setPosition(%.4f rad)  "
@@ -470,6 +496,23 @@ class AtlasFSM:
             of prev_angle.
         """
         return prev_angle + math.remainder(new_angle - prev_angle, math.tau)
+
+    def _world_to_relative(self, world_position: list[float]) -> list[float]:
+        """Convert a world-frame position to a turret-relative vector.
+
+        Subtracts the turret's world origin (``hardware.turret_position``) from
+        the given world position, producing a relative ``[dx, dy, dz]`` ready
+        for ``_aim_at`` / ``_compute_aim_angles``.
+
+        Args:
+            world_position: World-frame [x, y, z] in metres (ENU, Z-up) — e.g.
+                a Search Radar cue.
+
+        Returns:
+            Relative [dx, dy, dz] from the turret origin (metres, Z-up ENU).
+        """
+        turret = self.hardware.turret_position
+        return [world_position[i] - turret[i] for i in range(3)]
 
     def _compute_aim_angles(self, rel_target: list[float]) -> tuple[float, float]:
         """Convert relative Cartesian position to pan/tilt motor angles.

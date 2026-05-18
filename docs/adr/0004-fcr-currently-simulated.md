@@ -1,6 +1,6 @@
 # ADR-0004: Fire-Control Radar Currently Simulated
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0008
 
 ## Decision
 
