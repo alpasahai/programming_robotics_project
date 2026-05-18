@@ -1,40 +1,46 @@
-# Programmable multi-projectile attack pattern + ML pattern detection
+# Attack pattern, turret weapon, referee scoring + ML pattern detection
 
 **Status:** Concept capture — future work. Not scheduled for implementation.
 **Date:** 2026-05-18
 
 ## Purpose
 
-Capture, for later implementation, two linked ideas:
+Capture, for later implementation, a turret-defense "game" and a linked ML idea:
 
-1. An **adversary system** that launches multiple projectiles at the ATLAS
-   turret in a programmable, time-periodic pattern.
-2. A **micro ML model** that detects the launch frequency of that pattern from
-   what the turret observes.
+1. An **attacker** that launches projectiles at the ATLAS turret in a
+   programmable, time-periodic pattern.
+2. A **turret weapon** — the turret fires a physical projectile to intercept and
+   destroy the incoming ball.
+3. A **referee** that observes the world, applies scoring rules, and owns game
+   state.
+4. A **micro ML model** that detects the attacker's launch frequency from
+   observed launches.
 
 The pattern is deliberately designed to carry detectable *frequency* structure
 so the ML side has a well-posed, easy problem.
 
-## Part 1 — Attack pattern system
+## Controller architecture
 
-### Architecture
+Each role is a separate supervisor `Robot` with its own controller (consistent
+with the project already running `atlas_controller` and
+`search_radar_controller` as separate controllers):
 
-A **separate supervisor `Robot` controller** (the "attacker" / "launcher"),
-distinct from `atlas_controller`. This pulls projectile launch/reset *out* of
-the turret controller, which today carries it as an acknowledged hack (see the
-`atlas_controller.py` module docstring). Clean split of responsibility:
+- **Attacker** — offense. Launches incoming projectiles per the pattern.
+- **ATLAS turret** (`atlas_controller`) — defense. Senses, tracks, predicts,
+  aims, and fires the turret's projectile.
+- **Referee** — scoring and game state. Observes the world, no devices.
 
-- Turret controller = defense (sense, track, aim, fire).
-- Attacker controller = offense (launch projectiles per a pattern).
+Incoming projectiles do **not** get their own controllers — a single attacker
+supervisor owns them all.
 
-Projectiles do **not** get their own controllers — that would mean N
-controllers to coordinate. A single attacker supervisor owns them all.
+## Part 1 — Attacker (attack pattern system)
 
 ### Projectile handling
 
-Use a **pool** of pre-placed `SimulatedProjectile` nodes, recycled (reset on
-ground hit) rather than dynamically spawned via `importMFNode`. Simpler and
-faster. Spawning is an option later if unbounded waves are needed.
+First version uses **one** `SimulatedProjectile` node, recycled (reset, not
+deleted) after each ball resolves. A *pool* of pre-placed nodes is the later
+generalization for overlapping/simultaneous projectiles; dynamic spawning via
+`importMFNode` is a further option if waves must be unbounded.
 
 ### Pattern
 
@@ -46,55 +52,6 @@ patterns are easy to author.
 The pattern is **preloaded** at startup via a dedicated function (the attacker
 controller calls it once during setup to obtain the launch schedule) rather than
 generated reactively each step.
-
-### Run flow and scoring (refined 2026-05-18)
-
-For the first version, the rules are deliberately simple:
-
-- **One projectile alive at a time.** Launch timing in the pattern is spaced
-  widely enough that each ball reliably *resolves* — either destroyed by the
-  laser or landed on the ground — before the next ball is launched. This avoids
-  any need for multi-target tracking in the first cut.
-- **Both outcomes recycle the ball** (reset + relaunch the next one); the run is
-  endless. There is no sim-ending condition.
-- **Scoring:**
-  - Ball reaches the ground → **attacker** scores a point.
-  - Ball destroyed by the ATLAS laser → **defender (ATLAS)** scores a point.
-- "Destroyed" / "removed" = **recycle**, not true node deletion: `reset` the
-  ball (teleport away, zero velocity) and relaunch. This is the same mechanism
-  the pooled-projectile design uses.
-
-### Scoring interface
-
-Controllers are separate OS processes — there is no shared Python memory, so the
-score must move between them through a Webots mechanism.
-
-**Score ownership.** The **attacker controller is the single owner/writer** of
-the score. It already knows every launch and detects ground hits itself (it owns
-the ball, via the supervisor API). This avoids write races — one source of
-truth.
-
-**Destroy events — `Emitter` / `Receiver`.** The turret detects the laser
-destroy; it must notify the attacker. This is an *event*, so it uses radio
-messaging:
-
-- `AtlasTurret` carries an `Emitter` (`name "SCORE_EMITTER"`, `channel 1`,
-  `range -1` for infinite range).
-- The attacker `Robot` carries a `Receiver` (`name "SCORE_RECEIVER"`, matching
-  `channel 1`), `enable()`d at startup.
-- On a laser destroy, the turret `send()`s a destroy event. Each step the
-  attacker drains the receiver queue (`getQueueLength()` / `nextPacket()` loop)
-  and increments the defender score per destroy event.
-- Ground hits need no messaging — the attacker detects those directly.
-
-**`SCOREBOARD` node — optional.** A dedicated `SCOREBOARD` node with a
-`customData` (`SFString`) field, into which the attacker *publishes* the running
-score for other controllers or a HUD to read. This is **optional** — purely for
-display/consumption. The game is fully playable without it; the score lives in
-the attacker regardless. Add it only if something needs to read the score.
-
-Summary: **events in** (Emitter/Receiver delivers the destroy notification),
-**state out** (optional `SCOREBOARD` `customData` publishes the total).
 
 ### Projectile physics — start simple
 
@@ -108,13 +65,86 @@ gravity-only model the `BallisticTrajectoryPredictor` assumes:
 Damping reintroduces a baked-in prediction bias unrelated to filter quality, so
 it is left out until the baseline is validated.
 
-### Turret-side follow-up
+## Part 2 — Turret weapon: a fired projectile
 
-`atlas_controller` uses `getFromDef("PROJECTILE")` (singular). Multi-projectile
-will need a naming scheme (`PROJECTILE_0/1/2…`) plus list handling. `SearchRadar`
-already accepts a *list* of projectile nodes, so that side is ready.
+The turret destroys the incoming ball by **firing a physical projectile** at it
+— not by an instant-hit raycast laser.
 
-## Part 2 — ML pattern detector
+### Why a fired projectile (not an instant laser)
+
+The system already has a `BallisticTrajectoryPredictor` and an FSM `PREDICT`
+state that computes an **intercept point** `lookahead_steps` ahead. That
+prediction pipeline only has a reason to exist if the weapon has **travel
+time**:
+
+- An instant laser hits immediately → aim at the ball's current position → the
+  predictor becomes vestigial dead code.
+- A fired projectile travels → the turret must **lead** the target → the
+  predictor and intercept logic become the core of the game.
+
+A fired projectile is therefore more consistent with the architecture already
+built and tested.
+
+### Mechanics
+
+- The turret's "bullet" is a small `Solid` with `Physics` and a `boundingObject`
+  — structurally the same as `SimulatedProjectile`.
+- The turret controller (a supervisor) launches it with `setVelocity()` along
+  the current aim direction — the same mechanism the attacker uses.
+- A **hit** is a genuine Webots physical collision between the bullet's
+  `boundingObject` and the ball's. No raycast, no sphere-approximation math —
+  the simulation engine computes the real intersection.
+- The bullet is **recycled** (reset after each shot), matching the
+  one-projectile-at-a-time rule below. A bullet pool is future work.
+
+### Visual laser
+
+The existing `AtlasLaser` cylinder is **kept**, purely cosmetic — an aiming line
+/ tracer. It has no `boundingObject` and plays no role in hit detection.
+
+## Part 3 — Referee and scoring
+
+### Referee
+
+The referee is a supervisor `Robot` with no devices — it only observes. Because
+a supervisor can read any node in the scene, it detects **both** outcomes itself,
+with **no inter-controller messaging** (no `Emitter`/`Receiver`):
+
+- **Ground hit** — watch the incoming ball's world `z`; at/below ground level →
+  the ball landed.
+- **Bullet–ball collision** — detect the real collision via the supervisor API,
+  e.g. `ball.getContactPoints()` (does the ball report contact with the bullet?)
+  or a proximity check (`distance(bullet, ball) < bullet_radius + ball_radius`).
+
+### Scoring rules
+
+- Incoming ball reaches the ground → **attacker** scores a point.
+- Incoming ball destroyed by the turret's projectile → **defender (ATLAS)**
+  scores a point.
+
+The referee is the single owner/writer of the score — one source of truth.
+
+### `SCOREBOARD` node — optional
+
+A dedicated `SCOREBOARD` node with a `customData` (`SFString`) field, into which
+the referee *publishes* the running score for other controllers or a HUD to
+read. This is **optional** — purely for display. The game is fully playable
+without it; the score lives in the referee regardless.
+
+## Part 4 — Run flow
+
+For the first version the rules are deliberately simple:
+
+- **One projectile alive at a time.** Launch timing in the pattern is spaced
+  widely enough that each incoming ball reliably *resolves* — destroyed by the
+  turret's projectile, or landed — before the next is launched. This avoids
+  multi-target tracking in the first cut.
+- **Both outcomes recycle** the incoming ball (and the bullet); the run is
+  **endless** — no sim-ending condition.
+- "Destroyed" / "removed" = **recycle**, not true node deletion: `reset` the
+  node (teleport away, zero velocity) and relaunch.
+
+## Part 5 — ML pattern detector
 
 Kept deliberately minimal — "easiest" is the explicit goal.
 
@@ -137,14 +167,20 @@ Kept deliberately minimal — "easiest" is the explicit goal.
   live from observed launches; inference is feature extraction + one `predict()`
   call, cheap enough to run every step.
 
-### Connection between the two halves
+The attacker's launch log is directly the ML's training set — the single
+interface between the game and the ML.
 
-The attacker's launch log is directly the ML's training set — that is the
-single interface between the two parts.
+## Turret-side follow-up
+
+`atlas_controller` uses `getFromDef("PROJECTILE")` (singular). If multiple
+incoming projectiles are ever alive at once it will need a naming scheme
+(`PROJECTILE_0/1/2…`) plus list handling. `SearchRadar` already accepts a *list*
+of projectile nodes, so that side is ready.
 
 ## Out of scope (future work)
 
 - Actual ML training, feature tuning, hyperparameters.
 - Consuming the prediction (e.g. pre-aiming the turret from the classification).
-- Dynamic projectile spawning (vs the pooled approach).
+- A pool of incoming projectiles / turret bullets (vs single recycled nodes).
+- Dynamic projectile spawning (vs recycling).
 - Drag / damping physics ("hard mode").
