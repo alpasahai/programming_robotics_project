@@ -13,8 +13,8 @@ EXTERNPROTO "../protos/SearchRadar.proto"
 WorldInfo {
 }
 Viewpoint {
-  orientation 0.173179 0.0326108 -0.98435 2.77502
-  position 17.5 6.5 6.5
+  orientation -0.016474288009629294 -0.0002875470461014569 -0.9998642483613823 3.1068298753396513
+  position 16.51874194843741 0.2202270986063587 2.3780353767837736
 }
 Floor {
   appearance Parquetry {
@@ -29,5 +29,4 @@ DEF PROJECTILE SimulatedProjectile {
 DEF TURRET_BASE AtlasTurret {
 }
 DEF SEARCH_RADAR SearchRadar {
-  translation 0 4 0
 }

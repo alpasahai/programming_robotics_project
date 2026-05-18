@@ -6,6 +6,11 @@ from dataclasses import dataclass
 
 _log = logging.getLogger("AtlasFSM")
 
+# Dedicated logger for raw motor commands. Its distinct name ("AtlasFSM.motors")
+# makes every setPosition() call easy to spot/filter in the Webots console and
+# atlas_telemetry.log — used to diagnose twitchy turret motion.
+_motor_log = logging.getLogger("AtlasFSM.motors")
+
 
 @dataclass
 class SensorSuite:
@@ -129,6 +134,15 @@ class AtlasFSM:
         self._pan_angle = 0.0  # current pan motor angle (radians)
         self._pan_direction = 1  # +1 sweeping positive, -1 sweeping negative
 
+        # Last angle actually commanded to the pan motor (radians, unwrapped).
+        # Needed because pan = atan2(dx, dy) is discontinuous: when the target
+        # is roughly behind the turret it snaps between +pi and -pi as dx jitters
+        # around zero. Those are the same heading, but feeding them to the motor
+        # as absolute positions ~2*pi apart makes it whip a near-full turn each
+        # step. _aim_at() unwraps each new pan command relative to this value so
+        # the motor always takes the short way round. See _unwrap_pan().
+        self._last_pan_cmd = 0.0
+
         # ACQUIRE bookkeeping
         self._target = None  # selected target (detection position vector)
         self._acquire_entry_done = False  # guard: entry actions fire exactly once
@@ -195,6 +209,15 @@ class AtlasFSM:
             self._pan_direction = 1
 
         self.hardware.pan_motor.setPosition(self._pan_angle)
+        # Keep the unwrap reference current so the first TRACK aim unwraps
+        # relative to where the sweep actually left the pan motor.
+        self._last_pan_cmd = self._pan_angle
+        _motor_log.debug(
+            "[SEARCH sweep] pan_motor.setPosition(%.4f rad)  dir=%+d  limit=%.4f",
+            self._pan_angle,
+            self._pan_direction,
+            limit,
+        )
 
         # --- detection counting ---
         detections = self.sensors.search_radar.get_detections()
@@ -393,9 +416,60 @@ class AtlasFSM:
             (pan_angle, tilt_angle) in radians — the angles sent to the motors this step.
         """
         pan, tilt = self._compute_aim_angles(rel_position)
+
+        # pan from atan2 is in [-pi, pi] and is DISCONTINUOUS across the +/-pi
+        # seam: a target behind the turret makes pan flip between +pi and -pi as
+        # dx jitters around zero. Both are the same heading, but commanded as
+        # absolute motor positions they are ~2*pi apart, so the motor whips a
+        # near-full revolution every step (the "twitchy" turret). Unwrapping the
+        # raw angle to the equivalent nearest the last command keeps every
+        # commanded step <= pi, so the motor always takes the short way round.
+        raw_pan = pan
+        pan = self._unwrap_pan(raw_pan, self._last_pan_cmd)
+        self._last_pan_cmd = pan
+
         self.hardware.pan_motor.setPosition(pan)
         self.hardware.tilt_motor.setPosition(tilt)
+        _motor_log.debug(
+            "[%s aim] target_rel=[%.3f, %.3f, %.3f] -> "
+            "pan_motor.setPosition(%.4f rad)  tilt_motor.setPosition(%.4f rad)  "
+            "(raw_pan=%.4f, unwrapped by %+.4f)",
+            self.state,
+            rel_position[0],
+            rel_position[1],
+            rel_position[2],
+            pan,
+            tilt,
+            raw_pan,
+            pan - raw_pan,
+        )
         return pan, tilt
+
+    @staticmethod
+    def _unwrap_pan(new_angle: float, prev_angle: float) -> float:
+        """Return the rotation equivalent to new_angle that is nearest prev_angle.
+
+        Shifts new_angle by whole turns so it lands within +/-pi of prev_angle.
+        This removes the +/-pi discontinuity of atan2 (see _aim_at): without it
+        the pan motor is told to spin ~360 degrees back and forth whenever the
+        target sits roughly behind the turret, producing visible twitching.
+
+        math.remainder(x, tau) reduces x into [-pi, pi], so applying it to the
+        delta gives the shortest signed step from prev_angle to new_angle; adding
+        that back to prev_angle yields the unwrapped (continuous) command.
+
+        Note: pan may wind past +/-pi over many laps. That is intentional and
+        safe here because PAN_MOTOR has no minPosition/maxPosition limits set.
+
+        Args:
+            new_angle:  Freshly computed pan angle from atan2 (radians, [-pi, pi]).
+            prev_angle: Previous pan angle actually commanded to the motor (radians).
+
+        Returns:
+            new_angle adjusted by a whole number of turns to be within +/-pi
+            of prev_angle.
+        """
+        return prev_angle + math.remainder(new_angle - prev_angle, math.tau)
 
     def _compute_aim_angles(self, rel_target: list[float]) -> tuple[float, float]:
         """Convert relative Cartesian position to pan/tilt motor angles.
