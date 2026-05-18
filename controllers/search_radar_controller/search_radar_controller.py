@@ -192,8 +192,8 @@ search_radar = SearchRadar(
 
 
 fov_beam_node = radar_node.getFromProtoDef("SR_FOV_BEAM")
-fov_box_node = radar_node.getFromProtoDef("SR_FOV_BOX")
-if fov_beam_node is None or fov_box_node is None:
+fov_cone_node = radar_node.getFromProtoDef("SR_FOV_CONE")
+if fov_beam_node is None or fov_cone_node is None:
     log.warning(
         "Search Radar FOV visual nodes not found via getFromProtoDef; "
         "continuing without beam visual"
@@ -202,25 +202,29 @@ else:
     beam_spec = search_radar.get_beam_visual_spec()
     fov_beam_node.getField("translation").setSFVec3f(
         [
-            beam_spec.box_center_local[0],
-            beam_spec.box_center_local[1],
-            SEARCH_RADAR_BEAM_LOCAL_Z_M + beam_spec.box_center_local[2],
+            beam_spec.cone_center_local[0],
+            beam_spec.cone_center_local[1],
+            SEARCH_RADAR_BEAM_LOCAL_Z_M + beam_spec.cone_center_local[2],
         ]
     )
-    fov_box_node.getField("size").setSFVec3f(beam_spec.box_size)
+    fov_cone_node.getField("height").setSFFloat(beam_spec.cone_height)
+    fov_cone_node.getField("bottomRadius").setSFFloat(beam_spec.cone_radius)
 
     log.info(
-        "FOV visual box configured from SearchRadar visual spec: "
+        "FOV visual cone configured from SearchRadar visual spec: "
         "origin_world=%s centre_azimuth=%.3frad range=%.2fm "
-        "beam_width=%.3frad vertical_fov=%.3frad box_size=%s "
+        "beam_width=%.3frad vertical_fov=%.3frad half_angle=%.3frad "
+        "cone_height=%.3fm cone_radius=%.3fm "
         "local_center=%s phase_center_offset=%s",
         [round(v, 3) for v in beam_spec.origin_world],
         beam_spec.centre_azimuth,
         beam_spec.max_range,
         beam_spec.beam_width,
         beam_spec.vertical_fov,
-        [round(v, 3) for v in beam_spec.box_size],
-        [round(v, 3) for v in beam_spec.box_center_local],
+        beam_spec.half_angle,
+        beam_spec.cone_height,
+        beam_spec.cone_radius,
+        [round(v, 3) for v in beam_spec.cone_center_local],
         [round(v, 3) for v in SEARCH_RADAR_PHASE_CENTER_OFFSET_M],
     )
 

@@ -43,6 +43,7 @@ def test_search_radar_proto_preserves_runtime_fov_contracts():
 
     assert "DEF SR_FOV_BEAM Pose" in search_radar_proto
     assert "translation 0 10 1.1" in search_radar_proto
-    assert "geometry DEF SR_FOV_BOX Box" in search_radar_proto
-    assert "size 7 20 40" in search_radar_proto
+    assert "geometry DEF SR_FOV_CONE Cone" in search_radar_proto
+    assert "bottomRadius 3.5" in search_radar_proto
+    assert "height 20" in search_radar_proto
     assert 'name "SEARCH_RADAR_ANGLE"' in search_radar_proto

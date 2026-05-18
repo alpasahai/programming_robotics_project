@@ -29,9 +29,9 @@ class Detection(NamedTuple):
 
 @dataclass(frozen=True)
 class RadarBeamVisualSpec:
-    """Renderable box approximation of the SearchRadar detection beam.
+    """Renderable cone matching the SearchRadar detection beam.
 
-    The software gate and visualisation both use this same box volume.
+    The software gate and visualisation both use this same cone volume.
     """
 
     origin_world: list[float]
@@ -39,8 +39,10 @@ class RadarBeamVisualSpec:
     max_range: float
     beam_width: float
     vertical_fov: float
-    box_size: list[float]
-    box_center_local: list[float]
+    half_angle: float
+    cone_height: float
+    cone_radius: float
+    cone_center_local: list[float]
 
 
 class SearchRadar:
@@ -61,7 +63,7 @@ class SearchRadar:
     alongside FCR.
 
     Gating: each projectile is only reported when:
-      - target is inside the beam-aligned box returned by
+      - target is inside the beam-aligned cone returned by
         ``get_beam_visual_spec()``
 
     Note: ``radar_position`` is used for gating only. ``Detection.position``
@@ -151,20 +153,28 @@ class SearchRadar:
 
     def get_beam_visual_spec(self) -> RadarBeamVisualSpec:
         """Return the render spec for the beam currently used by detection."""
-        visual_width = 2.0 * math.tan(self._beam_width / 2.0) * self._max_range
-        visual_height = 2.0 * math.tan(self._half_fov) * self._max_range
+        half_angle = self._beam_half_angle()
+        cone_radius = math.tan(half_angle) * self._max_range
         return RadarBeamVisualSpec(
             origin_world=list(self._radar_position),
             centre_azimuth=self._beam_azimuth,
             max_range=self._max_range,
             beam_width=self._beam_width,
             vertical_fov=self._half_fov * 2.0,
-            box_size=[visual_width, self._max_range, visual_height],
-            box_center_local=[0.0, self._max_range / 2.0, 0.0],
+            half_angle=half_angle,
+            cone_height=self._max_range,
+            cone_radius=cone_radius,
+            cone_center_local=[0.0, self._max_range / 2.0, 0.0],
         )
 
+    def _beam_half_angle(self) -> float:
+        """Return the cone half-angle used by both detection and visualisation."""
+        if self._beam_width >= 2 * math.pi:
+            return self._half_fov
+        return min(self._beam_width / 2.0, self._half_fov)
+
     def _beam_local_position(self, world: list[float]) -> list[float]:
-        """Transform a world position into the beam's local box frame."""
+        """Transform a world position into the beam's local cone frame."""
         dx = world[0] - self._radar_position[0]
         dy = world[1] - self._radar_position[1]
         dz = world[2] - self._radar_position[2]
@@ -180,17 +190,16 @@ class SearchRadar:
             dz,
         ]
 
-    def _is_inside_beam_box(self, world: list[float]) -> bool:
-        """Return whether a world position is inside the rendered FOV box."""
+    def _is_inside_beam_cone(self, world: list[float]) -> bool:
+        """Return whether a world position is inside the rendered FOV cone."""
         spec = self.get_beam_visual_spec()
         local = self._beam_local_position(world)
-        half_width = spec.box_size[0] / 2.0
-        half_height = spec.box_size[2] / 2.0
-
+        if local[1] < 0.0 or local[1] > spec.max_range:
+            return False
+        radius_at_y = math.tan(spec.half_angle) * local[1]
         return (
-            abs(local[0]) <= half_width
-            and 0.0 <= local[1] <= spec.max_range
-            and abs(local[2]) <= half_height
+            math.sqrt(local[0] * local[0] + local[2] * local[2])
+            <= radius_at_y
         )
 
     def update(self) -> None:
@@ -201,7 +210,7 @@ class SearchRadar:
         1. Advance the beam azimuth by ``scan_rate`` (wraps at 2π).
         2. Age every existing track buffer entry by +1.
         3. For each projectile in ``self._projectiles`` (index = track_id,
-           per ADR-0006): reject if it falls outside the same beam-aligned box
+           per ADR-0006): reject if it falls outside the same beam-aligned cone
            volume returned by ``get_beam_visual_spec()``;
            for accepted projectiles, subtract ``turret_position``, add
            independent Gaussian noise (std=``noise_std``) on each axis, and
@@ -228,7 +237,7 @@ class SearchRadar:
         # (c) Gate projectiles; refresh buffer entries for those that pass.
         for index, proj in enumerate(self._projectiles):
             world = proj.getPosition()
-            if not self._is_inside_beam_box(world):
+            if not self._is_inside_beam_cone(world):
                 continue
 
             noisy = [

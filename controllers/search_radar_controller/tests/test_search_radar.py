@@ -594,14 +594,12 @@ def test_beam_visual_spec_matches_software_fov_gates():
     assert spec.max_range == 20.0
     assert spec.beam_width == math.radians(20)
     assert spec.vertical_fov == math.radians(90)
-    assert spec.box_size == [
-        2.0 * math.tan(math.radians(10)) * 20.0,
-        20.0,
-        2.0 * math.tan(math.radians(45)) * 20.0,
-    ]
-    assert spec.box_center_local == [0.0, 10.0, 0.0]
-    assert radar._is_inside_beam_box([1.0 + math.sin(math.radians(45)) * 10.0, 2.0 + math.cos(math.radians(45)) * 10.0, 3.0])
-    assert not radar._is_inside_beam_box([1.0 + math.sin(math.radians(45)) * 25.0, 2.0 + math.cos(math.radians(45)) * 25.0, 3.0])
+    assert spec.half_angle == math.radians(10)
+    assert spec.cone_height == 20.0
+    assert abs(spec.cone_radius - math.tan(math.radians(10)) * 20.0) < 1e-9
+    assert spec.cone_center_local == [0.0, 10.0, 0.0]
+    assert radar._is_inside_beam_cone([1.0 + math.sin(math.radians(45)) * 10.0, 2.0 + math.cos(math.radians(45)) * 10.0, 3.0])
+    assert not radar._is_inside_beam_cone([1.0 + math.sin(math.radians(45)) * 25.0, 2.0 + math.cos(math.radians(45)) * 25.0, 3.0])
 
 
 def test_beam_sweep_discovers_target_then_loses_it():

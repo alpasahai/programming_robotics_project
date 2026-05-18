@@ -53,22 +53,32 @@ PROTO SearchRadar [
 
             DEF SR_FOV_BEAM Pose {
               translation 0 10 1.1
-              # The controller updates this box from SearchRadar's software
-              # range, azimuth beam width, and vertical FOV. Local +Y is
-              # azimuth 0 in the SearchRadar math.
+              # The controller updates this cone from SearchRadar's software
+              # range and beam angle. Local +Y is azimuth 0 in the SearchRadar
+              # math. The child Pose rotates Webots Cone local +Z back toward
+              # local -Y so the cone apex sits at the radar phase centre.
               children [
-                Shape {
-                  appearance PBRAppearance {
-                    baseColor 1 0.65 0
-                    emissiveColor 0.25 0.12 0
-                    roughness 1
-                    metalness 0
-                    transparency 0.82
-                  }
+                Pose {
+                  rotation 1 0 0 1.5708
+                  children [
+                    Shape {
+                      appearance PBRAppearance {
+                        baseColor 1 0.65 0
+                        emissiveColor 0.25 0.12 0
+                        roughness 1
+                        metalness 0
+                        transparency 0.82
+                      }
 
-                  geometry DEF SR_FOV_BOX Box {
-                    size 7 20 40
-                  }
+                      geometry DEF SR_FOV_CONE Cone {
+                        bottomRadius 3.5
+                        height 20
+                        subdivision 32
+                        side TRUE
+                        bottom TRUE
+                      }
+                    }
+                  ]
                 }
               ]
             }
