@@ -1,0 +1,33 @@
+#VRML_SIM R2025a utf8
+# Aim-line / laser visualization for the ATLAS turret.
+# A thin emissive cylinder. Purely visual (no boundingObject, no physics).
+
+PROTO AtlasLaser [
+  field SFVec3f    translation  0 0 0
+  field SFRotation rotation     0 0 0 0
+  field SFColor    color        1 0 0
+  field SFFloat    length       8
+  field SFFloat    radius       0.008
+  field SFFloat    transparency 0.8
+] {
+  Pose {
+    translation IS translation
+    rotation IS rotation
+    children [
+      Shape {
+        appearance PBRAppearance {
+          baseColor IS color
+          emissiveColor IS color
+          roughness 0
+          metalness 0
+          transparency IS transparency
+        }
+        geometry Cylinder {
+          height IS length
+          radius IS radius
+          subdivision 6
+        }
+      }
+    ]
+  }
+}

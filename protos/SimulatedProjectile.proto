@@ -4,7 +4,7 @@ PROTO SimulatedProjectile [
   field SFVec3f translation 2.59591e-05 -2.53 0.04984303999999999
   field SFRotation rotation -3.337720000000082e-20 3.258350000000054e-15 1 -3.141585307179556
   field SFString name "PROJECTILE"
-  field SFVec3f linearVelocity 0 0 -2.7231689385293186e-18
+  field SFVec3f linearVelocity 0 0 0
 ] {
   Solid {
     translation IS translation
