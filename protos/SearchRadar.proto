@@ -14,6 +14,13 @@ PROTO SearchRadar [
     controller "search_radar_controller"
 
     children [
+      Emitter {
+        name "SR_CUE_EMITTER"
+        type "radio"
+        channel 1
+        range -1
+      }
+
       HingeJoint {
         jointParameters HingeJointParameters {
           axis 0 0 1
