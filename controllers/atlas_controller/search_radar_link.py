@@ -28,7 +28,7 @@ class SearchRadarLink:
     Args:
         receiver: A Webots ``Receiver`` device (or a compatible stub) that has
                   already been enabled on the desired timestep.  Must implement
-                  ``getQueueLength() -> int``, ``getData() -> bytes``, and
+                  ``getQueueLength() -> int``, ``getBytes() -> bytes``, and
                   ``nextPacket() -> None``.
     """
 
@@ -47,7 +47,7 @@ class SearchRadarLink:
         target position in metres (ENU, Z-up).
         """
         while self._receiver.getQueueLength() > 0:
-            data = self._receiver.getData()
+            data = self._receiver.getBytes()
             x, y, z = struct.unpack("ddd", data)
             self._last_cue = [x, y, z]
             self._receiver.nextPacket()

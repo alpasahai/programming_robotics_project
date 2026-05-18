@@ -17,7 +17,7 @@ class StubReceiver:
 
     Mimics the Webots Receiver queue API:
         getQueueLength() -> int
-        getData()        -> bytes  (current front packet)
+        getBytes()       -> bytes  (current front packet, raw binary)
         nextPacket()     -> None   (pop front of queue)
 
     The receiver is constructed with an optional list of (x, y, z) tuples.
@@ -38,7 +38,7 @@ class StubReceiver:
         """Return the number of unread packets currently in the queue."""
         return len(self._queue)
 
-    def getData(self):
+    def getBytes(self):
         """Return the raw bytes of the front packet without popping it."""
         return self._queue[0]
 
