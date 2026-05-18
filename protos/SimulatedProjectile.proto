@@ -1,23 +1,21 @@
 #VRML_SIM R2025a utf8
 
 PROTO SimulatedProjectile [
-  field SFVec3f translation 2.59591e-05 -2.53 0.04984303999999999
-  field SFRotation rotation -3.337720000000082e-20 3.258350000000054e-15 1 -3.141585307179556
+  field SFVec3f translation 0 -3 0.5
   field SFString name "PROJECTILE"
   field SFVec3f linearVelocity 0 0 0
 ] {
   Solid {
     translation IS translation
-    rotation IS rotation
     children [
       DEF BALL_SHAPE Shape {
         appearance PBRAppearance {
-          baseColor 1 0 0.498039
+          baseColor 1 0 0
           roughness 0.3
           metalness 0
         }
         geometry Sphere {
-          radius 0.05
+          radius 0.5
           subdivision 4
         }
       }
@@ -27,18 +25,7 @@ PROTO SimulatedProjectile [
     boundingObject USE BALL_SHAPE
     physics Physics {
       density -1
-      mass 0.1
-      centerOfMass [
-        0 0 -0.0001
-      ]
-      inertiaMatrix [
-        2.3e-05 2.3e-05 2.3e-05
-        0 0 0
-      ]
-      damping Damping {
-        linear 0.17
-        angular 0.33
-      }
+      mass 1
     }
     linearVelocity IS linearVelocity
   }
