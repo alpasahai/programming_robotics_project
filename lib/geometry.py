@@ -42,6 +42,44 @@ def azimuth_elevation_range(
     return azimuth, elevation, range_dist
 
 
+def angular_separation(
+    az1: float,
+    el1: float,
+    az2: float,
+    el2: float,
+) -> float:
+    """Compute the great-circle angular separation between two (az, el) directions.
+
+    Converts each (azimuth, elevation) pair to a unit vector using the Z-up ENU
+    convention consistent with ``azimuth_elevation_range``:
+        x = sin(az) * cos(el)
+        y = cos(az) * cos(el)
+        z = sin(el)
+    Then returns ``acos(clamp(dot(v1, v2), -1, 1))``, the angle between the
+    two unit vectors in [0, π].
+
+    Args:
+        az1: Azimuth of first direction in radians.
+        el1: Elevation of first direction in radians.
+        az2: Azimuth of second direction in radians.
+        el2: Elevation of second direction in radians.
+
+    Returns:
+        Angular separation in radians, always in [0, π].
+    """
+    x1 = math.sin(az1) * math.cos(el1)
+    y1 = math.cos(az1) * math.cos(el1)
+    z1 = math.sin(el1)
+
+    x2 = math.sin(az2) * math.cos(el2)
+    y2 = math.cos(az2) * math.cos(el2)
+    z2 = math.sin(el2)
+
+    dot = x1 * x2 + y1 * y2 + z1 * z2
+    clamped = max(-1.0, min(1.0, dot))
+    return math.acos(clamped)
+
+
 def angle_diff(a: float, b: float) -> float:
     """Compute the shortest signed difference between two angles.
 
