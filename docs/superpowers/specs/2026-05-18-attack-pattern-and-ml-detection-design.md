@@ -64,10 +64,37 @@ For the first version, the rules are deliberately simple:
   ball (teleport away, zero velocity) and relaunch. This is the same mechanism
   the pooled-projectile design uses.
 
-Score is held in the attacker controller (it owns the projectiles and knows each
-launch). Laser-destroy detection is reported to it by the turret side, or the
-attacker observes the ball state directly via the supervisor API — interface to
-be decided at implementation time.
+### Scoring interface
+
+Controllers are separate OS processes — there is no shared Python memory, so the
+score must move between them through a Webots mechanism.
+
+**Score ownership.** The **attacker controller is the single owner/writer** of
+the score. It already knows every launch and detects ground hits itself (it owns
+the ball, via the supervisor API). This avoids write races — one source of
+truth.
+
+**Destroy events — `Emitter` / `Receiver`.** The turret detects the laser
+destroy; it must notify the attacker. This is an *event*, so it uses radio
+messaging:
+
+- `AtlasTurret` carries an `Emitter` (`name "SCORE_EMITTER"`, `channel 1`,
+  `range -1` for infinite range).
+- The attacker `Robot` carries a `Receiver` (`name "SCORE_RECEIVER"`, matching
+  `channel 1`), `enable()`d at startup.
+- On a laser destroy, the turret `send()`s a destroy event. Each step the
+  attacker drains the receiver queue (`getQueueLength()` / `nextPacket()` loop)
+  and increments the defender score per destroy event.
+- Ground hits need no messaging — the attacker detects those directly.
+
+**`SCOREBOARD` node — optional.** A dedicated `SCOREBOARD` node with a
+`customData` (`SFString`) field, into which the attacker *publishes* the running
+score for other controllers or a HUD to read. This is **optional** — purely for
+display/consumption. The game is fully playable without it; the score lives in
+the attacker regardless. Add it only if something needs to read the score.
+
+Summary: **events in** (Emitter/Receiver delivers the destroy notification),
+**state out** (optional `SCOREBOARD` `customData` publishes the total).
 
 ### Projectile physics — start simple
 
