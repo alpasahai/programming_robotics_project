@@ -38,8 +38,12 @@ from search_radar import SearchRadar
 # single source for both the SearchRadar model and the visible debug beam.
 SEARCH_RADAR_MAX_RANGE_M = 20.0
 SEARCH_RADAR_VERTICAL_FOV_RAD = math.pi / 2
-SEARCH_RADAR_BEAM_WIDTH_RAD = 0.35
-SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.15
+# Beam width and scan rate are coupled by the dwell invariant:
+#   beam_width >= 2 * scan_rate  (guarantees dwell >= 2 steps per pass)
+# These are Webots-tuned starting values: revisit ~21 steps (~0.67 s at 32 ms),
+# dwell ~2.3 steps.  Raise both together if revisit rate needs further tuning.
+SEARCH_RADAR_BEAM_WIDTH_RAD = 0.70
+SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.30
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20
 SEARCH_RADAR_NOISE_STD_M = 0.2
 SEARCH_RADAR_ROTATING_ENDPOINT_Z_M = 1.0
@@ -71,6 +75,19 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("SearchRadarController")
+
+# Dwell-safety guard: warn if the invariant beam_width >= 2 * scan_rate is
+# violated.  A warning (not a hard failure) lets the controller still start so
+# a human can re-tune in Webots.
+if SEARCH_RADAR_BEAM_WIDTH_RAD < 2 * SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP:
+    log.warning(
+        "Dwell-safety invariant violated: SEARCH_RADAR_BEAM_WIDTH_RAD=%.3f < "
+        "2 * SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP=%.3f. "
+        "The beam may step past the ball between timesteps (dwell < 1 step). "
+        "Raise beam_width or lower scan_rate so beam_width >= 2 * scan_rate.",
+        SEARCH_RADAR_BEAM_WIDTH_RAD,
+        SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
+    )
 
 # ---------------------------------------------------------------------------
 # Bootstrap

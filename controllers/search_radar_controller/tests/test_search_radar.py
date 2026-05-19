@@ -887,3 +887,78 @@ def test_buffered_position_is_frozen_while_beam_is_away():
             f"get_target_position() must be frozen at {detection_pos}, "
             f"not updated to {moved_pos} (dark cycle {i + 1})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Dwell regression — production scan-rate/beam-width coupling (Task 3, Fix 2)
+# ---------------------------------------------------------------------------
+
+def test_production_scan_rate_dwell_at_least_two_steps():
+    """The shipped scan_rate=0.30 + beam_width=0.70 must yield >= 2 detection steps per pass.
+
+    Dwell (the number of consecutive update() steps during which the beam
+    illuminates a stationary target) must be at least 2 so the SR never steps
+    completely past the ball in a single timestep.
+
+    The invariant that guarantees this is beam_width >= 2 * scan_rate, which
+    gives dwell = beam_width / scan_rate >= 2.
+
+    Setup: target placed due north (azimuth 0), half-width = 0.35 rad, so the
+    beam illuminates the target while its centre is in [-0.35, +0.35].  The
+    beam starts just outside the leading edge (azimuth = -0.35 - epsilon) and
+    advances at scan_rate = 0.30 rad/step.  We record which steps detect the
+    target and assert there are >= 2 consecutive detections.
+    """
+    scan_rate = 0.30          # production value after Fix 2
+    beam_width = 0.70         # production value after Fix 2
+
+    # Regression guard: invariant must hold for the test geometry to be valid.
+    assert beam_width >= 2 * scan_rate, (
+        f"Dwell invariant violated: beam_width={beam_width} < 2*scan_rate={2*scan_rate}"
+    )
+
+    proj = StubProjectile([[0.0, 100.0, 0.0]] * 30)  # stationary, due north
+    radar = _make_radar(
+        [proj],
+        radar_position=[0.0, 0.0, 0.0],
+        turret_position=[0.0, 0.0, 0.0],
+        beam_width=beam_width,
+        scan_rate=scan_rate,
+        track_timeout=20,
+    )
+
+    # Start beam just outside the leading edge of the illumination window.
+    # Half-width = beam_width / 2 = 0.35 rad; start at -(half_width + 0.01).
+    half_width = beam_width / 2.0
+    radar._beam_azimuth = -(half_width + 0.01)
+
+    # Sweep enough steps to pass completely through the window and beyond.
+    # Window width = 0.70 rad; at 0.30 rad/step that takes ~2.3 steps, so 10
+    # steps is more than sufficient.
+    detection_flags = []
+    for _ in range(10):
+        radar.update()
+        # Only count a step as a fresh hit (age == 0) to avoid track-buffer
+        # carry-over inflating the dwell count.
+        detections = radar.get_detections()
+        fresh_hit = any(
+            radar._track_buffer[d.track_id][1] == 0
+            for d in detections
+        )
+        detection_flags.append(fresh_hit)
+
+    # Find the longest run of consecutive fresh detections.
+    max_run = 0
+    current_run = 0
+    for hit in detection_flags:
+        if hit:
+            current_run += 1
+            max_run = max(max_run, current_run)
+        else:
+            current_run = 0
+
+    assert max_run >= 2, (
+        f"Dwell too short: longest consecutive fresh-detection run = {max_run}, "
+        f"expected >= 2 (scan_rate={scan_rate}, beam_width={beam_width}). "
+        f"Detection flags: {detection_flags}"
+    )
