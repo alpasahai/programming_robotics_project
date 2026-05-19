@@ -9,8 +9,7 @@
 
 The Fire-Control Radar (FCR) cannot reliably lock a cued target, so the FSM
 never reaches `ENGAGING`. Diagnosis (three parallel investigations) found two
-compounding, confirmed bugs plus one dependency. This spec defines the fixes
-for both bugs and the Search Radar cue-cadence change they rely on. It does
+compounding, confirmed bugs. This spec defines the fix for each. It does
 **not** cover the radar base-class / shared-proto refactor — that is deferred
 (see *Out of scope*).
 
@@ -26,15 +25,31 @@ Consequence: valid low intercepts are rejected → `PREDICT` bounces back to
 `TRACK` → `AIMING`/`ENGAGING` are unreachable. The "below ground" telemetry is
 the visible symptom; the gating failure is the real damage.
 
-**Bug B — acquisition cannot converge.** Two reinforcing causes:
-1. The FCR FOV is a single `fov_half_angle = 0.1 rad` (5.7°) — a *tracking*-
-   grade beam used for *acquisition* (`fire_control_radar.py:106`).
-2. Since the cone-rework PR the Search Radar emits a cue only on the ~2–3 steps
-   per revolution its rotating cone overlaps the ball (`fresh_detections` only,
-   `search_radar_controller.py:286`). The cue ATLAS acts on is stale and
-   carries 0.2 m noise; a stale + noisy coarse cue routinely places the true
-   ball outside the 0.1 rad cone → the FCR never locks → the FSM is stuck in
-   `ACQUIRE` (the lock gate `fsm.py:281`).
+The ground check is *retained*: `_target_in_range` runs it on the **predicted
+intercept** in `PREDICT` (`fsm.py:316`) and on the current target in `TRACK`
+(`fsm.py:393`). The intercept is a future point that the predictor computes —
+no sensor (search radar or otherwise) measures it, so sensor coverage cannot
+replace this gate. The bug is the *frame* of the comparison, not the check
+itself.
+
+**Bug B — the cue is too stale for the FCR to lock.** The FCR has a single
+narrow boresight cone (`fov_half_angle`, `fire_control_radar.py:76`) — this is
+correct by design: the FCR is the precision *tracking* sensor and the Search
+Radar is the exclusive radar that cues it (ADR-0008). The lock failure is in
+the cue, not the cone:
+
+1. The Search Radar emits a cue only on a fresh beam hit (`fresh_detections`
+   only — buffered-only steps hit `continue`,
+   `search_radar_controller.py:286-323`).
+2. A buffered `Detection` "holds the position measured at the last detection —
+   it is NOT updated while the beam is away" (`search_radar.py:237-238`). So
+   between hits the cue is either absent or a frozen, increasingly stale point.
+
+This is not about how briefly the ball is in the beam — beam dwell is tunable.
+The defect is what the cue *is* between fresh hits: ATLAS aims at a frozen,
+stale point while the ball moves on, so the ball is outside the FCR's narrow
+cone when `update()` runs → the FCR never locks → the FSM is stuck in
+`ACQUIRE` (the lock gate `fsm.py:281`).
 
 **Unconfirmed — out of scope.** The Search Radar narrow-cone gate may lack a
 separate vertical-FOV term and could strand the FSM in `SEARCH` for a
@@ -51,18 +66,25 @@ compare against a single world-frame threshold. *Rationale:* "ground" is
 physically world Z = 0; a world-framed threshold stays meaningful and survives
 a turret remount.
 
-**D2 — two-tier FCR FOV.** The FCR gets a wide *acquisition* cone and a narrow
-*tracking* cone, selected by lock state. *Rationale:* a single value cannot
-serve both — acquisition must tolerate a coarse cue, tracking wants precision;
-widening uniformly would degrade track quality.
+**D2 — the FCR keeps its single tracking cone.** The FCR is not widened and
+gains no second "acquisition" cone. It is the precision tracking sensor; the
+Search Radar is the exclusive radar that cues it. *Rationale:* a two-tier FOV
+would let the FCR self-acquire and blur the radar split — acquisition is the
+Search Radar's job. The fix belongs in the cue (D3), not the FCR cone.
 
-**D3 — Search Radar emits a cue every step from its buffered track
-(issue #21).** While a track is buffered (within `track_timeout`), the
-controller emits a cue every step, not only on fresh beam hits. *Rationale:*
-ACQUIRE needs a continuously-updating aim point; the fresh-hit-only policy
-introduced by the cone-rework PR is the regression. The cue payload carries a
-`source` / `track_age` field (already present in the controller logs) so ATLAS
-and tests can distinguish fresh from buffered.
+**D3 — the cue must stay a good-enough estimate for FCR lock.** The Search
+Radar's job is to tell the FCR where to point; the cue it emits must be a
+close-enough estimate that the ball falls inside the FCR's narrow cone when
+`update()` runs. Two changes serve this:
+- Emit a cue *every step* while a track is buffered (within `track_timeout`),
+  not only on fresh beam hits — ATLAS always has a current aim point.
+- The buffered track must not be a frozen position. Between beam hits the
+  Search Radar advances the buffered `Detection` (a velocity estimate from
+  successive fresh hits) so the emitted cue follows the ball. The exact
+  extrapolation model is an implementation choice (see *Fixes*); the
+  acceptance bar is "good enough for the FCR to lock", verified in Webots.
+The cue payload carries a `source` (`fresh_beam_hit` | `buffered`) and
+`track_age` field so ATLAS and tests can distinguish fresh from extrapolated.
 
 ## Fixes
 
@@ -80,27 +102,21 @@ and tests can distinguish fresh from buffered.
   (0.1): document why they differ (projectile-landed vs intercept-validity) or
   unify them. Implementer to pick; record the choice.
 
-### Fix 2 — two-tier FCR FOV (Bug B, issue #17)
-
-- `FireControlRadar.__init__` takes `acquire_fov_half_angle` and
-  `track_fov_half_angle` in place of the single `fov_half_angle`.
-- `update()` gates against the acquisition angle while unlocked and the
-  tracking angle while locked, so a lock, once achieved, holds against the
-  tighter cone without re-acquisition jitter. The implementer pins the exact
-  unlocked→locked semantics and the corresponding test (see *Verification*).
-- `atlas_controller.py` passes both values. Starting points: acquire ≈ 0.35
-  rad, track ≈ 0.1 rad — **tuned in Webots by the human**, not the implementing
-  agent (no live sim here).
-- This satisfies issue #17's "set one for fire-control".
-
-### Fix 3 — continuous buffered cue (Bug B, issue #21)
+### Fix 2 — continuous, non-stale cue (Bug B, issues #21, #17)
 
 - `search_radar_controller.py` emits a cue every step for every buffered track
   still within `track_timeout`, not only `fresh_detections`.
+- `search_radar.py` advances the buffered `Detection` between fresh hits using
+  a velocity estimate derived from successive fresh detections, so the emitted
+  cue is a current estimate rather than the frozen last-hit position. Keep the
+  model simple (constant-velocity extrapolation is the starting point); the
+  acceptance bar is a Webots-confirmed FCR lock, not estimator sophistication.
 - The cue message includes `source` (`fresh_beam_hit` | `buffered`) and
   `track_age`, matching the existing log fields.
 - `SearchRadarLink` already persists the last cue — no behavioural change
   needed there; optionally surface the new fields for future use.
+- This resolves issue #17: the FCR keeps its single fire-control cone — no FOV
+  change — and acquisition is fixed in the cue, where the regression lives.
 
 ## Out of scope
 
@@ -125,18 +141,19 @@ primary gate:
 - **`test_fsm`** — `_target_in_range` accepts an intercept whose *world* height
   is above `ground_threshold` but whose turret-relative height is below it (the
   exact issue #19 case); still rejects a genuinely sub-ground intercept.
-- **`test_fcr`** — a target inside the acquisition cone but outside the
-  tracking cone is detected while unlocked; the chosen unlocked→locked
-  semantics are pinned by an explicit test.
 - **Search Radar controller** — a buffered track (age ≥ 1, within timeout)
   emits a cue every step with `source="buffered"`.
+- **`test_search_radar`** — a buffered track's position advances between fresh
+  hits (no longer frozen at the last-hit value).
 
 **Manual Webots verification (human):** the FSM reaches `ENGAGING` on a real
-engagement, and the issue #19 below-ground misreport is gone.
+engagement, the FCR locks the cued ball, and the issue #19 below-ground
+misreport is gone.
 
 ## Risk
 
-All three fixes are unit-testable, but end-to-end confirmation that the FCR
-engages requires the human to run Webots. If the FSM still hangs after these
-fixes, the prime remaining suspect is the unconfirmed Search Radar
-vertical-FOV gate.
+The fixes are unit-testable, but end-to-end confirmation that the FCR engages
+requires the human to run Webots — in particular, whether the extrapolated cue
+is "good enough" for the narrow FCR cone to lock can only be confirmed live and
+may need tuning. If the FSM still hangs after these fixes, the prime remaining
+suspect is the unconfirmed Search Radar vertical-FOV gate.
