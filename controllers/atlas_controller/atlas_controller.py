@@ -206,6 +206,33 @@ while robot.step(timestep) != -1:
     cue_link.update()
     fcr.update(*fsm.commanded_aim)
 
+    # Diagnostic telemetry — emitted only in ACQUIRE when FCR is not locked, so
+    # we can verify whether the angular-velocity-exceeds-cone hypothesis holds.
+    # This log line records the raw gating values and changes NO behaviour.
+    if not fcr.is_locked() and fsm.state == AtlasFSM.ACQUIRE:
+        _diag = fcr.get_last_gate_diagnostic()
+        if _diag is not None:
+            _cone_fail = _diag.separation > _diag.fov_half_angle
+            _range_fail = _diag.target_range > _diag.max_range
+            log.debug(
+                "[FCR REJECT] step=%d  boresight=(az=%.4f rad, el=%.4f rad)"
+                "  target=(az=%.4f rad, el=%.4f rad, range=%.2f m)"
+                "  separation=%.4f rad  fov_half=%.4f rad  max_range=%.1f m"
+                "  reason=%s  (cone=%s, range=%s)",
+                step_count,
+                _diag.boresight_az,
+                _diag.boresight_el,
+                _diag.target_az,
+                _diag.target_el,
+                _diag.target_range,
+                _diag.separation,
+                _diag.fov_half_angle,
+                _diag.max_range,
+                _diag.rejection_reason,
+                _cone_fail,
+                _range_fail,
+            )
+
     # 2. Predict — propagate Kalman state forward one timestep
     track_filter.predict()
 

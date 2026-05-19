@@ -7,8 +7,43 @@ the turret's real aim direction.
 """
 import math
 import random
+from typing import NamedTuple
 
 import geometry
+
+
+class GateDiagnostic(NamedTuple):
+    """Snapshot of the gating values from the most recent ``update()`` call.
+
+    All angle values are in radians; range values are in metres.
+
+    Attributes:
+        boresight_az:    Azimuth commanded to ``update()`` (Z-up ENU, radians).
+        boresight_el:    Elevation commanded to ``update()`` (radians).
+        target_az:       Computed azimuth of the projectile from ``fcr_position``
+                         (radians).
+        target_el:       Computed elevation of the projectile from ``fcr_position``
+                         (radians).
+        target_range:    Distance from ``fcr_position`` to the projectile (metres).
+        separation:      Angular separation between boresight and target (radians).
+        fov_half_angle:  The FCR's cone half-angle threshold (radians, constant).
+        max_range:       The FCR's maximum detection range (metres, constant).
+        rejection_reason: ``None`` when both gates pass (target detected).
+                          A string containing ``'cone'`` when
+                          ``separation > fov_half_angle``, ``'range'`` when
+                          ``target_range > max_range``, or both words when both
+                          conditions fail simultaneously.
+    """
+
+    boresight_az: float
+    boresight_el: float
+    target_az: float
+    target_el: float
+    target_range: float
+    separation: float
+    fov_half_angle: float
+    max_range: float
+    rejection_reason: str | None
 
 
 class FireControlRadar:
@@ -79,6 +114,7 @@ class FireControlRadar:
         self._rng = rng if rng is not None else random.Random()
         self._last_position: list[float] | None = None
         self._locked: bool = False
+        self._last_gate_diagnostic: GateDiagnostic | None = None
 
     def update(self, boresight_az: float, boresight_el: float) -> None:
         """Gate detection against the turret's current aim, then store the result.
@@ -105,7 +141,32 @@ class FireControlRadar:
             boresight_az, boresight_el, target_az, target_el
         )
 
-        if separation <= self._fov_half_angle and target_range <= self._max_range:
+        cone_fail = separation > self._fov_half_angle
+        range_fail = target_range > self._max_range
+
+        if cone_fail or range_fail:
+            parts = []
+            if cone_fail:
+                parts.append("cone")
+            if range_fail:
+                parts.append("range")
+            rejection_reason: str | None = "+".join(parts)
+        else:
+            rejection_reason = None
+
+        self._last_gate_diagnostic = GateDiagnostic(
+            boresight_az=boresight_az,
+            boresight_el=boresight_el,
+            target_az=target_az,
+            target_el=target_el,
+            target_range=target_range,
+            separation=separation,
+            fov_half_angle=self._fov_half_angle,
+            max_range=self._max_range,
+            rejection_reason=rejection_reason,
+        )
+
+        if not cone_fail and not range_fail:
             relative = [world[i] - self._turret_position[i] for i in range(3)]
             if self._noise_std:
                 relative = [
@@ -140,3 +201,18 @@ class FireControlRadar:
             ``update()`` has been called, or when gating fails.
         """
         return self._locked
+
+    def get_last_gate_diagnostic(self) -> GateDiagnostic | None:
+        """Return the gating values recorded during the most recent ``update()``.
+
+        Intended for diagnostic telemetry only: callers must not use this to
+        make engagement decisions. The returned snapshot is immutable
+        (``NamedTuple``) and safe to log without copying.
+
+        Returns:
+            A ``GateDiagnostic`` with boresight, target angles/range,
+            angular separation, gate thresholds, and the rejection reason
+            (``None`` when the target was inside both gates). Returns
+            ``None`` before the first ``update()`` call.
+        """
+        return self._last_gate_diagnostic

@@ -9,7 +9,7 @@ import random
 
 import pytest
 from stubs import StubProjectile
-from fire_control_radar import FireControlRadar
+from fire_control_radar import FireControlRadar, GateDiagnostic
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +244,116 @@ def test_noise_perturbs_detected_position():
     expected_mean_abs = noise_std * (2 / math.pi) ** 0.5
     # Allow ±30% tolerance for sampling variance
     assert 0.7 * expected_mean_abs < mean_abs < 1.3 * expected_mean_abs
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic accessor — get_last_gate_diagnostic()
+# ---------------------------------------------------------------------------
+
+def test_get_last_gate_diagnostic_returns_none_before_update():
+    """get_last_gate_diagnostic() returns None before the first update() call."""
+    proj = StubProjectile([_position_at_az_el_range(FCR_POS, BORESIGHT_AZ, BORESIGHT_EL, 10.0)])
+    fcr = FireControlRadar(proj, FCR_POS, TURRET_POS, FOV, MAX_RANGE)
+    assert fcr.get_last_gate_diagnostic() is None
+
+
+def test_get_last_gate_diagnostic_inside_cone():
+    """After an update where the target is inside the cone, the diagnostic records
+    all gate values and reports rejection_reason as None (no rejection)."""
+    target_az = BORESIGHT_AZ
+    target_el = BORESIGHT_EL
+    target_range = 10.0
+    world_pos = _position_at_az_el_range(FCR_POS, target_az, target_el, target_range)
+    proj = StubProjectile([world_pos])
+    fcr = FireControlRadar(proj, FCR_POS, TURRET_POS, FOV, MAX_RANGE, noise_std=0.0)
+    fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+
+    diag = fcr.get_last_gate_diagnostic()
+    assert diag is not None
+    assert isinstance(diag, GateDiagnostic)
+
+    # Boresight values must match what was passed to update()
+    assert diag.boresight_az == pytest.approx(BORESIGHT_AZ, abs=1e-9)
+    assert diag.boresight_el == pytest.approx(BORESIGHT_EL, abs=1e-9)
+
+    # Target angles/range must be consistent with the placed position
+    assert diag.target_az == pytest.approx(target_az, abs=1e-6)
+    assert diag.target_el == pytest.approx(target_el, abs=1e-6)
+    assert diag.target_range == pytest.approx(target_range, abs=1e-6)
+
+    # Separation from boresight is ~0 (target is on-boresight)
+    assert diag.separation == pytest.approx(0.0, abs=1e-6)
+
+    # Gate constants match what the FCR was constructed with
+    assert diag.fov_half_angle == pytest.approx(FOV, abs=1e-9)
+    assert diag.max_range == pytest.approx(MAX_RANGE, abs=1e-9)
+
+    # No rejection: target is inside cone and in range
+    assert diag.rejection_reason is None
+
+
+def test_get_last_gate_diagnostic_outside_cone():
+    """After an update where the target exceeds fov_half_angle, rejection_reason
+    includes 'cone' and separation is greater than fov_half_angle."""
+    # Place target well outside the FOV cone
+    target_az = BORESIGHT_AZ + 2 * FOV
+    world_pos = _position_at_az_el_range(FCR_POS, target_az, BORESIGHT_EL, 10.0)
+    proj = StubProjectile([world_pos])
+    fcr = FireControlRadar(proj, FCR_POS, TURRET_POS, FOV, MAX_RANGE, noise_std=0.0)
+    fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+
+    diag = fcr.get_last_gate_diagnostic()
+    assert diag is not None
+    assert diag.separation > diag.fov_half_angle
+    assert "cone" in diag.rejection_reason
+
+
+def test_get_last_gate_diagnostic_beyond_max_range():
+    """After an update where the target is beyond max_range, rejection_reason
+    includes 'range'."""
+    world_pos = _position_at_az_el_range(FCR_POS, BORESIGHT_AZ, BORESIGHT_EL, MAX_RANGE + 5.0)
+    proj = StubProjectile([world_pos])
+    fcr = FireControlRadar(proj, FCR_POS, TURRET_POS, FOV, MAX_RANGE, noise_std=0.0)
+    fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+
+    diag = fcr.get_last_gate_diagnostic()
+    assert diag is not None
+    assert diag.target_range > diag.max_range
+    assert "range" in diag.rejection_reason
+
+
+def test_get_last_gate_diagnostic_both_cone_and_range():
+    """When target is both outside the cone and beyond max_range, rejection_reason
+    includes both 'cone' and 'range'."""
+    target_az = BORESIGHT_AZ + 2 * FOV
+    world_pos = _position_at_az_el_range(FCR_POS, target_az, BORESIGHT_EL, MAX_RANGE + 5.0)
+    proj = StubProjectile([world_pos])
+    fcr = FireControlRadar(proj, FCR_POS, TURRET_POS, FOV, MAX_RANGE, noise_std=0.0)
+    fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+
+    diag = fcr.get_last_gate_diagnostic()
+    assert diag is not None
+    assert "cone" in diag.rejection_reason
+    assert "range" in diag.rejection_reason
+
+
+def test_get_last_gate_diagnostic_updates_on_each_call():
+    """The diagnostic is overwritten on every update() call, reflecting the most
+    recent boresight and target geometry."""
+    az1 = BORESIGHT_AZ
+    az2 = BORESIGHT_AZ + 2 * FOV  # outside cone on second update
+
+    world_pos1 = _position_at_az_el_range(FCR_POS, az1, BORESIGHT_EL, 10.0)
+    world_pos2 = _position_at_az_el_range(FCR_POS, az2, BORESIGHT_EL, 10.0)
+    proj = StubProjectile([world_pos1, world_pos2])
+    fcr = FireControlRadar(proj, FCR_POS, TURRET_POS, FOV, MAX_RANGE, noise_std=0.0)
+
+    # First update: on-boresight — no rejection
+    fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+    diag1 = fcr.get_last_gate_diagnostic()
+    assert diag1.rejection_reason is None
+
+    # Second update: target moved outside cone, boresight unchanged — cone rejection
+    fcr.update(BORESIGHT_AZ, BORESIGHT_EL)
+    diag2 = fcr.get_last_gate_diagnostic()
+    assert "cone" in diag2.rejection_reason
