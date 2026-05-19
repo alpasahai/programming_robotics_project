@@ -32,7 +32,12 @@ from fsm import AtlasFSM, SensorSuite, TurretHardware
 # Constants
 # ---------------------------------------------------------------------------
 
-GROUND_HIT_THRESHOLD_M = 0.05  # metres — projectile below this height counts as landed
+GROUND_HIT_THRESHOLD_M = 0.05  # metres (world frame) — projectile below this height counts as
+# physically landed; drives the relaunch logic (see main loop below).
+# Intentionally distinct from FSMConfig.ground_threshold (0.1 m): that constant
+# answers "is a predicted intercept high enough to be worth aiming at?" and
+# guards the FSM engagement gate.  These are different questions with different
+# values and must not be unified.
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -244,7 +249,10 @@ while robot.step(timestep) != -1:
 
         dist = _distance(icept, _ORIGIN)
         in_range = dist <= fsm.config.max_range
-        above_ground = icept[2] > fsm.config.ground_threshold
+        # Convert intercept height to world frame before comparing — matches the
+        # FSM gate in fsm.step() which also works in world frame.
+        icept_world_z = icept[2] + turret_position[2]
+        above_ground = icept_world_z > fsm.config.ground_threshold
 
         fp = [round(v, 2) for v in fpos]
         tp = [round(v, 2) for v in true_rel]
@@ -269,7 +277,7 @@ while robot.step(timestep) != -1:
             dist,
             fsm.config.max_range,
             "IN-RANGE" if in_range else "OUT-OF-RANGE",
-            icept[2],
+            icept_world_z,
             fsm.config.ground_threshold,
             "ABOVE-GROUND" if above_ground else "BELOW-GROUND",
         )
