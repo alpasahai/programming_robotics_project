@@ -33,17 +33,18 @@ import struct
 from controller import Supervisor
 
 from search_radar import SearchRadar
+from search_radar_constants import (
+    SEARCH_RADAR_BEAM_WIDTH_RAD,
+    SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
+)
 
 # Search Radar sensor and visualisation parameters. Keep these constants as the
 # single source for both the SearchRadar model and the visible debug beam.
 SEARCH_RADAR_MAX_RANGE_M = 20.0
 SEARCH_RADAR_VERTICAL_FOV_RAD = math.pi / 2
-# Beam width and scan rate are coupled by the dwell invariant:
-#   beam_width >= 2 * scan_rate  (guarantees dwell >= 2 steps per pass)
-# These are Webots-tuned starting values: revisit ~21 steps (~0.67 s at 32 ms),
-# dwell ~2.3 steps.  Raise both together if revisit rate needs further tuning.
-SEARCH_RADAR_BEAM_WIDTH_RAD = 0.70
-SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.30
+# SEARCH_RADAR_BEAM_WIDTH_RAD and SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP are
+# imported from search_radar_constants (Webots-free) so tests can verify the
+# shipped values without triggering the Supervisor bootstrap.
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20
 SEARCH_RADAR_NOISE_STD_M = 0.2
 SEARCH_RADAR_ROTATING_ENDPOINT_Z_M = 1.0

@@ -4,6 +4,10 @@ import random
 
 from stubs import StubProjectile
 from search_radar import Detection, RadarBeamVisualSpec, SearchRadar
+from search_radar_constants import (
+    SEARCH_RADAR_BEAM_WIDTH_RAD,
+    SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -894,7 +898,7 @@ def test_buffered_position_is_frozen_while_beam_is_away():
 # ---------------------------------------------------------------------------
 
 def test_production_scan_rate_dwell_at_least_two_steps():
-    """The shipped scan_rate=0.30 + beam_width=0.70 must yield >= 2 detection steps per pass.
+    """The shipped scan_rate and beam_width must yield >= 2 detection steps per pass.
 
     Dwell (the number of consecutive update() steps during which the beam
     illuminates a stationary target) must be at least 2 so the SR never steps
@@ -903,18 +907,23 @@ def test_production_scan_rate_dwell_at_least_two_steps():
     The invariant that guarantees this is beam_width >= 2 * scan_rate, which
     gives dwell = beam_width / scan_rate >= 2.
 
-    Setup: target placed due north (azimuth 0), half-width = 0.35 rad, so the
-    beam illuminates the target while its centre is in [-0.35, +0.35].  The
-    beam starts just outside the leading edge (azimuth = -0.35 - epsilon) and
-    advances at scan_rate = 0.30 rad/step.  We record which steps detect the
+    Uses the live values from search_radar_constants so a future edit to the
+    shipped constants that violates the invariant will immediately fail here.
+
+    Setup: target placed due north (azimuth 0).  Half-width = beam_width / 2,
+    so the beam illuminates the target while its centre is in
+    [-half_width, +half_width].  The beam starts just outside the leading edge
+    and advances at scan_rate rad/step.  We record which steps detect the
     target and assert there are >= 2 consecutive detections.
     """
-    scan_rate = 0.30          # production value after Fix 2
-    beam_width = 0.70         # production value after Fix 2
+    scan_rate = SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP   # live shipped value
+    beam_width = SEARCH_RADAR_BEAM_WIDTH_RAD           # live shipped value
 
-    # Regression guard: invariant must hold for the test geometry to be valid.
+    # Regression guard: asserts the shipped constants satisfy the invariant.
     assert beam_width >= 2 * scan_rate, (
-        f"Dwell invariant violated: beam_width={beam_width} < 2*scan_rate={2*scan_rate}"
+        f"Dwell invariant violated in shipped constants: "
+        f"SEARCH_RADAR_BEAM_WIDTH_RAD={beam_width} < "
+        f"2 * SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP={2 * scan_rate}"
     )
 
     proj = StubProjectile([[0.0, 100.0, 0.0]] * 30)  # stationary, due north
