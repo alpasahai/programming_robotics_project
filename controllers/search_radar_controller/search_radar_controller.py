@@ -84,7 +84,7 @@ if SEARCH_RADAR_BEAM_WIDTH_RAD < 2 * SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP:
     log.warning(
         "Dwell-safety invariant violated: SEARCH_RADAR_BEAM_WIDTH_RAD=%.3f < "
         "2 * SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP=%.3f. "
-        "The beam may step past the ball between timesteps (dwell < 1 step). "
+        "The beam may step past the ball between timesteps (dwell < 2 steps). "
         "Raise beam_width or lower scan_rate so beam_width >= 2 * scan_rate.",
         SEARCH_RADAR_BEAM_WIDTH_RAD,
         SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,

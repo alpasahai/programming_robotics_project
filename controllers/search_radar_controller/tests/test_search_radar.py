@@ -937,7 +937,7 @@ def test_production_scan_rate_dwell_at_least_two_steps():
     )
 
     # Start beam just outside the leading edge of the illumination window.
-    # Half-width = beam_width / 2 = 0.35 rad; start at -(half_width + 0.01).
+    # Half-width = beam_width / 2; start just outside the leading edge.
     half_width = beam_width / 2.0
     radar._beam_azimuth = -(half_width + 0.01)
 
