@@ -466,6 +466,32 @@ def test_target_in_range_exactly_at_max_range():
     assert fsm._target_in_range([0.0, 0.0, 10.0]) is True
 
 
+def test_target_in_range_world_height_above_threshold_accepted():
+    """Regression for issue #19: turret-relative dz below ground_threshold but
+    world height above it must be accepted.
+
+    Setup: turret at world Z = 0.05 m, ground_threshold = 0.1 m.
+    Intercept dz = 0.07 m (turret-relative) → world height = 0.07 + 0.05 = 0.12 m.
+    0.12 > 0.1, so the intercept is valid and must be accepted.
+    """
+    fsm, _, _ = _make_fsm(turret_position=[0.0, 0.0, 0.05])
+    # dz=0.07 is below ground_threshold=0.1 in turret-relative frame, but
+    # world height = 0.07 + 0.05 = 0.12 which is above 0.1.
+    assert fsm._target_in_range([0.5, 0.5, 0.07]) is True
+
+
+def test_target_in_range_world_height_below_threshold_rejected():
+    """Companion to issue #19 regression: a genuinely sub-ground intercept
+    (world height below ground_threshold) must still be rejected.
+
+    Setup: turret at world Z = 0.05 m, ground_threshold = 0.1 m.
+    Intercept dz = 0.03 m (turret-relative) → world height = 0.03 + 0.05 = 0.08 m.
+    0.08 < 0.1, so the intercept is below ground and must be rejected.
+    """
+    fsm, _, _ = _make_fsm(turret_position=[0.0, 0.0, 0.05])
+    assert fsm._target_in_range([0.5, 0.5, 0.03]) is False
+
+
 # ---------------------------------------------------------------------------
 # _do_track — helpers
 # ---------------------------------------------------------------------------

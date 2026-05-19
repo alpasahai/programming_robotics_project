@@ -48,7 +48,9 @@ class FSMConfig:
     """
 
     max_range: float = 10.0  # metres — target beyond this → RESET
-    ground_threshold: float = 0.1  # metres world-Z — below this → landed
+    ground_threshold: float = 0.1  # metres world-Z — below this → landed.
+    # _target_in_range converts the turret-relative dz operand to world frame
+    # (dz + hardware.turret_position[2]) before comparing against this threshold.
     acquire_frames: int = 3  # consecutive detections to leave SEARCH
     min_track_frames: int = 15  # TrackFilter frames before PREDICT
     # lookahead_steps tuned for the ATLAS projectile (~1.6 m apex, ~1.2 s flight):
@@ -536,9 +538,12 @@ class AtlasFSM:
         """Return True if the target is within range and above the ground threshold.
 
         A target is considered valid when:
-        - Its Euclidean distance from the turret is ≤ config.max_range (metres).
-        - Its world-Z component (rel_position[2]) is > config.ground_threshold
-          (metres), meaning it has not hit the ground.
+        - Its Euclidean distance from the turret is <= config.max_range (metres).
+        - Its world-Z height (rel_position[2] + hardware.turret_position[2]) is
+          > config.ground_threshold (metres), meaning it has not hit the ground.
+          The operand is turret-relative, so turret_position[2] is added to
+          convert to world frame before comparing against the world-framed
+          ground_threshold.
 
         Args:
             rel_position: Relative [dx, dy, dz] from turret origin (metres).
@@ -548,7 +553,8 @@ class AtlasFSM:
         """
         dx, dy, dz = rel_position
         distance = math.sqrt(dx * dx + dy * dy + dz * dz)
-        return distance <= self.config.max_range and dz > self.config.ground_threshold
+        world_z = dz + self.hardware.turret_position[2]
+        return distance <= self.config.max_range and world_z > self.config.ground_threshold
 
     def _transition(self, new_state: str) -> None:
         """Log and execute a state transition, resetting per-state bookkeeping.
