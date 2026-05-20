@@ -48,9 +48,11 @@ from search_radar import SearchRadar
 #Chnaging to accomodate a smaller world:
 SEARCH_RADAR_MAX_RANGE_M = 8.0
 SEARCH_RADAR_VERTICAL_FOV_RAD = math.pi #full hemisphere - no elevation gate
-SEARCH_RADAR_BEAM_WIDTH_RAD = 0.8 #allows for wider beam
-SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.25 #faster sweep
-SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 30
+
+SEARCH_RADAR_BEAM_WIDTH_RAD = 1.2 #allows for wider beam
+SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.15 #slower sweep
+SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 60 #holding track longer
+
 SEARCH_RADAR_NOISE_STD_M = 0.2
 
 SEARCH_RADAR_ROTATING_ENDPOINT_Z_M = 0.3

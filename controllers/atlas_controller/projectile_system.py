@@ -14,7 +14,7 @@ class ProjectileSystem:
     #self.projectile.setVelocity([3, 5, 10, 0, 0, 0])
     #self.projectile.setVelocity([0, 4, 6, 0, 0, 0])
     #slower and shorter arc:
-    self.projectile.setVelocity([0, 3, 4, 0, 0, 0])
+    self.projectile.setVelocity([0, 3, 6, 0, 0, 0])
 
   def reset_projectile(self):
     #Making sure projectile isn't moving

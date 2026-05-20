@@ -157,6 +157,9 @@ class AtlasFSM:
         self._commanded_pan = 0.0  # last pan angle sent to the pan motor (radians)
         self._commanded_tilt = 0.0  # last tilt angle sent to the tilt motor (radians)
         self.laser_active = False  # True while ENGAGING; read by the controller
+        
+        #CONSUME_FIRE - for the Bullet System:
+        self.pending_fire_command = False
 
     def step(self) -> None:
         """Advance FSM by one timestep.
@@ -384,6 +387,7 @@ class AtlasFSM:
         Precondition: self._intercept is not None (set by PREDICT, unchanged since AIMING).
         """
         self.laser_active = True
+        self.pending_fire_command = True #This is for the bullets
 
         # Hold aim on the fixed intercept
         self._aim_at(self._intercept)
@@ -569,3 +573,14 @@ class AtlasFSM:
         elif new_state == self.TRACK:
             self._track_frames = 0
             self._intercept = None
+            
+     #THIS IS THE CONSUME FIRE COMMAND:
+     def consume_fire_command(self):
+         if self.pending_fire_command:
+             self.pending_fire_command = False
+             return True
+         return False
+         
+         
+         
+     

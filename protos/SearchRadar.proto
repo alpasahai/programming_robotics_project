@@ -63,7 +63,7 @@ PROTO SearchRadar [
                   children [
                     Shape {
                       appearance PBRAppearance {
-                        baseColor 107, 17, 94
+                        baseColor 1, 0.6, 0
                         emissiveColor 0.25 0.12 0
                         roughness 1
                         metalness 0
