@@ -355,12 +355,12 @@ while robot.step(timestep) != -1:
     
     if projectile_launched: 
         ball_z = projectile_position[2]
-        ball_vz = projectile_velcocity[2]
+        ball_vz = projectile_velocity[2]
         
         #GROUND HIT
         if ball_z < GROUND_HIT_THRESHOLD_M and ball_vz < 0:
             score_offence += 1
-            log.info("SCORE - PROJECTILE HIT GROUND. Offence %d : Defence %d", socre_offence, score_defence)
+            log.info("SCORE - PROJECTILE HIT GROUND. Offence %d : Defence %d", score_offence, score_defence)
             projectile_launched = False
             waiting_for_launch = True
             reset_time = current_time
