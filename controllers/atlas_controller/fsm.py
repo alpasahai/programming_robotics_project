@@ -574,12 +574,12 @@ class AtlasFSM:
             self._track_frames = 0
             self._intercept = None
             
-     #THIS IS THE CONSUME FIRE COMMAND:
-     def consume_fire_command(self):
-         if self.pending_fire_command:
-             self.pending_fire_command = False
-             return True
-         return False
+    #THIS IS THE CONSUME FIRE COMMAND:
+    def consume_fire_command(self):
+        if self.pending_fire_command:
+            self.pending_fire_command = False
+            return True
+        return False
          
          
          
