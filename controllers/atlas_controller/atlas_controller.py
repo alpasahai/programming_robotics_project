@@ -33,6 +33,10 @@ from fsm import AtlasFSM, SensorSuite, TurretHardware
 # ---------------------------------------------------------------------------
 
 GROUND_HIT_THRESHOLD_M = 0.05  # metres — projectile below this height counts as landed
+BULLET_GROUND_THRESHOLD_M = 0.05   # metres — bullet below this height = ground hit (miss)
+BULLET_MAX_LIFETIME_STEPS = 200    # safety timeout: remove a bullet that never reports
+MUZZLE_SPEED = 12.0                # m/s — bullet launch speed
+MUZZLE_OFFSET_M = 0.4              # m — spawn offset along aim direction
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -95,8 +99,10 @@ fcr = FireControlRadar(
     projectile,
     fcr_position=turret_position,   # FCR is co-located with the turret
     turret_position=turret_position,
-    fov_half_angle=0.1,             # ~5.7° half-angle — narrow FCR beam
-    max_range=20.0,                 # metres — tune in Webots if needed
+    #fov_half_angle=0.1,             # ~5.7° half-angle — narrow FCR beam
+    fov_half_angle=0.25,
+    max_range = 10.0, #for the smaller world
+    #max_range=20.0,                 # metres — tune in Webots if needed
     noise_std=0.02,                 # low noise — FCR is precise (metres std)
 )
 cue_link = SearchRadarLink(receiver)
@@ -142,6 +148,17 @@ launch_delay = 2000  # ms — 2 second gap between shots
 projectile_system.launch_projectile()
 projectile_launched = True
 
+# ONE-BALL SYSTEM - scoring system to ensure that the ball is REMOVED on ground hot OR laser hit
+#Scoring is tracked and the next ball launches after a delay
+score_offence = 0 #ball hit ground
+score_defence = 0 #ball shot down
+
+# Bullet bookkeeping — one bullet alive at a time
+root_children = robot.getRoot().getField("children")
+bullet_node = None
+bullet_age = 0
+
+#-------------------TELEMETRY LOGGING--------------------------------------------------
 log.info("=" * 78)
 log.info("ATLAS telemetry legend")
 log.info("  All positions below are TURRET-RELATIVE metres [dx, dy, dz] — the")
@@ -273,26 +290,94 @@ while robot.step(timestep) != -1:
             fsm.config.ground_threshold,
             "ABOVE-GROUND" if above_ground else "BELOW-GROUND",
         )
+        
+    # 5a - Fire spawning a bullet when the FSM enters ENGAGING - one bullet at a time
+    fire_command = fsm.consume_fire_command()
+    
+    if fire_command is not None:
+        if bullet_node is None:
+            mag = math.sqrt(sum(c * c for c in fire_command)) or 1.0
+            direction = [c / mag for c in fire_command]
+            spawn = [turret_position[i] + direction[i] * MUZZLE_OFFSET_M for i in range(3)]
+            root_children.importMFNodeFromString(
+                -1,
+                'AtlasBullet {{ translation {:.5f} {:.5f} {:.5f} name "TURRET_BULLET" }}'.format(
+                    spawn[0], spawn[1], spawn[2]
+                ),
+            )
+            bullet_node = root_children.getMFNode(-1)
+            bullet_node.setVelocity(
+                [direction[i] * MUZZLE_SPEED for i in range(3)] + [0.0, 0.0, 0.0]
+            )
+            bullet_age = 0
+            log.info("FIRE — bullet spawned at [%.2f, %.2f, %.2f]", *spawn)
+        else:
+            log.info("FIRE ignored — bullet still in flight")
+        
+    #5b - Managing the Live bullets - this resolves its and removes the bullet node
+    if bullet_node is not None:
+        bullet_age += 1
+        bullet_z = bullet_node.getPosition()[2]
+        custom_data = bullet_node.getField("customData").getSFString()
 
-    # 5. Manage projectile — detect ground hit and relaunch after delay.
+        if custom_data == "HIT":
+            if bullet_z <= BULLET_GROUND_THRESHOLD_M:
+                log.info("Bullet — GROUND HIT")
+            else:
+                score_defence += 1
+                log.info("SCORE — PROJECTILE SHOT DOWN. Offence %d : Defence %d",
+                         score_offence, score_defence)
+                projectile_system.reset_projectile()
+                projectile_launched = False
+                waiting_for_launch = True
+                reset_time = robot.getTime() * 1000
+            bullet_node.remove()
+            bullet_node = None
+            
+        elif bullet_age >= BULLET_MAX_LIFETIME_STEPS:
+            log.info("Bullet — LIFELINE END - REMOVING")
+            bullet_node.remove()
+            bullet_node = None
+            
+        elif bullet_z <= BULLET_GROUND_THRESHOLD_M:
+            log.info("Bullet — REACHED GROUND W/O SENSOR LATCH")
+            bullet_node.remove()
+            bullet_node = None
+
+    # 6. Manage projectile — detect ground hit and relaunch after delay.
     #    This is independent of FSM state: the turret cycle and the projectile
     #    trajectory are decoupled so the FSM can run through RESET→SEARCH while
     #    waiting for the next shot.
+    #Manage projectile - one ball at a time withs scoring
     projectile_position = projectile.getPosition()
     projectile_velocity = projectile.getVelocity()
     current_time = robot.getTime() * 1000  # convert to ms
-
-    if (
-        projectile_position[2] < GROUND_HIT_THRESHOLD_M
-        and projectile_velocity[2] < 0
-        and projectile_launched
-    ):
-        projectile_launched = False
-        waiting_for_launch = True
-        reset_time = current_time
-        projectile_system.reset_projectile()
-
+    
+    if projectile_launched: 
+        ball_z = projectile_position[2]
+        ball_vz = projectile_velcocity[2]
+        
+        #GROUND HIT
+        if ball_z < GROUND_HIT_THRESHOLD_M and ball_vz < 0:
+            score_offence += 1
+            log.info("SCORE - PROJECTILE HIT GROUND. Offence %d : Defence %d", socre_offence, score_defence)
+            projectile_launched = False
+            waiting_for_launch = True
+            reset_time = current_time
+            projectile_system.reset_projectile()
+        
+        #Bullet hit detection (reuses existing bullet lifecycle block) (handled in block 5B above — when "BALL HIT" logged, increment defence)
     if waiting_for_launch and (current_time - reset_time > launch_delay):
         projectile_system.launch_projectile()
         projectile_launched = True
         waiting_for_launch = False
+        log.info("LAUNCH — NEW PROJECTILE. Score: Offence %d : Defence %d", score_offence, score_defence)            
+        
+        
+        
+        
+        
+        
+        
+        
+        

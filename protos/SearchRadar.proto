@@ -26,7 +26,7 @@ PROTO SearchRadar [
       HingeJoint {
         jointParameters HingeJointParameters {
           axis 0 0 1
-          anchor 0 0 1
+          anchor 0 0 0.3
         }
 
         device [
@@ -46,13 +46,13 @@ PROTO SearchRadar [
 
           children [
             RadarBar {
-              height 2
+              height 0.5
               radius 0.05
               color 1 0.5 0
             }
 
             DEF SR_FOV_BEAM Pose {
-              translation 0 10 1.1
+              translation 0 4 0.2
               # The controller updates this cone from SearchRadar's software
               # range and beam angle. Local +Y is azimuth 0 in the SearchRadar
               # math. The child Pose rotates Webots Cone local +Z back toward
@@ -63,7 +63,7 @@ PROTO SearchRadar [
                   children [
                     Shape {
                       appearance PBRAppearance {
-                        baseColor 1 0.65 0
+                        baseColor 107, 17, 94
                         emissiveColor 0.25 0.12 0
                         roughness 1
                         metalness 0
@@ -71,8 +71,8 @@ PROTO SearchRadar [
                       }
 
                       geometry DEF SR_FOV_CONE Cone {
-                        bottomRadius 3.5
-                        height 20
+                        bottomRadius 2.0 #was 3.5
+                        height 8 #was 20
                         subdivision 32
                         side TRUE
                         bottom TRUE
@@ -82,13 +82,13 @@ PROTO SearchRadar [
                 }
               ]
             }
-
+            #THIS IS THE BLUE BOX FOR THE SEARCH RADE
             Pose {
-              translation 0 0 1.1
+              translation 0 0 0.2 # was 0 0 1.1
               children [
                 Shape {
                   appearance PBRAppearance {
-                    baseColor 0.1 0.1 1
+                    baseColor 0, 0, 1
                     roughness 0.4
                     metalness 0.2
                   }
