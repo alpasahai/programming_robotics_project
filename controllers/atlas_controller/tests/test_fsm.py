@@ -7,7 +7,7 @@ known turret world position.
 """
 import math
 import pytest
-from stubs import StubFCR, StubCueLink, StubTrackFilter, StubMotor
+from stubs import StubFCR, StubCueLink, StubTrackFilter, StubMotor, StubGroundHitLink
 from fsm import AtlasFSM, SensorSuite, TurretHardware, FSMConfig
 
 
@@ -61,6 +61,7 @@ def _make_fsm(
         fcr=fcr,
         track_filter=track_filter,
         ballistic_predictor=None,
+        ground_hit_link=StubGroundHitLink(),
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -439,31 +440,33 @@ def test_compute_aim_angles_combined():
 
 
 # ---------------------------------------------------------------------------
-# _target_in_range
+# _target_within_range (range-only; no ground reasoning lives in the FSM)
 # ---------------------------------------------------------------------------
 
-def test_target_in_range_within_bounds():
-    """A nearby, above-ground target must be in range."""
+def test_target_within_range_within_bounds():
+    """A nearby target must be in range."""
     fsm, _, _ = _make_fsm()
-    assert fsm._target_in_range([1.0, 1.0, 1.0]) is True
+    assert fsm._target_within_range([1.0, 1.0, 1.0]) is True
 
 
-def test_target_in_range_too_far():
+def test_target_within_range_too_far():
     """A target beyond max_range must not be in range."""
     fsm, _, _ = _make_fsm()
-    assert fsm._target_in_range([10.0, 10.0, 10.0]) is False
+    assert fsm._target_within_range([10.0, 10.0, 10.0]) is False
 
 
-def test_target_in_range_below_ground_threshold():
-    """A target below ground_threshold (dz=0.0) must not be in range."""
+def test_target_within_range_ignores_ground():
+    """A target at the floor (dz=0.0) but within max_range IS in range:
+    the FSM no longer treats low Z as out-of-range — ground hits come only
+    from the attacker's emitted cue."""
     fsm, _, _ = _make_fsm()
-    assert fsm._target_in_range([0.5, 0.5, 0.0]) is False
+    assert fsm._target_within_range([0.5, 0.5, 0.0]) is True
 
 
-def test_target_in_range_exactly_at_max_range():
+def test_target_within_range_exactly_at_max_range():
     """A target exactly at max_range=10.0 on one axis must be in range (≤ check)."""
     fsm, _, _ = _make_fsm()
-    assert fsm._target_in_range([0.0, 0.0, 10.0]) is True
+    assert fsm._target_within_range([0.0, 0.0, 10.0]) is True
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +498,7 @@ def _make_fsm_in_track(
         fcr=StubFCR(position=[1.0, 1.0, 1.0]),
         track_filter=track_filter,
         ballistic_predictor=None,
+        ground_hit_link=StubGroundHitLink(),
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -601,6 +605,7 @@ def _make_fsm_in_predict(intercept, max_range=10.0, ground_threshold=0.1):
         fcr=StubFCR(position=[1.0, 1.0, 1.0]),
         track_filter=track_filter,
         ballistic_predictor=predictor,
+        ground_hit_link=StubGroundHitLink(),
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -636,15 +641,6 @@ def test_predict_valid_intercept_stores_intercept():
 def test_predict_out_of_range_intercept_transitions_to_track():
     """PREDICT with an out-of-range intercept must transition back to TRACK."""
     fsm, _, _ = _make_fsm_in_predict(intercept=[8.0, 8.0, 8.0], max_range=10.0)
-    fsm.step()
-    assert fsm.state == AtlasFSM.TRACK
-
-
-def test_predict_below_ground_intercept_transitions_to_track():
-    """PREDICT with a below-ground intercept must transition back to TRACK."""
-    fsm, _, _ = _make_fsm_in_predict(
-        intercept=[1.0, 1.0, 0.0], ground_threshold=0.1
-    )
     fsm.step()
     assert fsm.state == AtlasFSM.TRACK
 
@@ -693,6 +689,7 @@ def _make_fsm_in_aiming(
         fcr=StubFCR(position=[1.0, 1.0, 1.0]),
         track_filter=track_filter,
         ballistic_predictor=None,
+        ground_hit_link=StubGroundHitLink(),
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -776,6 +773,7 @@ def _make_fsm_in_engaging(
     track_position=None,
     max_range=10.0,
     ground_threshold=0.1,
+    ground_hit=False,
 ):
     """Build an AtlasFSM already in ENGAGING state.
 
@@ -803,6 +801,7 @@ def _make_fsm_in_engaging(
         fcr=StubFCR(position=[1.0, 1.0, 1.0]),
         track_filter=track_filter,
         ballistic_predictor=None,
+        ground_hit_link=StubGroundHitLink(hit=ground_hit),
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -861,14 +860,26 @@ def test_engage_transitions_to_reset_when_target_out_of_range():
     assert fsm.state == AtlasFSM.RESET
 
 
-def test_engage_transitions_to_reset_when_target_hits_ground():
-    """ENGAGING must transition to RESET when the target hits the ground."""
+def test_engage_transitions_to_reset_on_ground_hit_cue():
+    """ENGAGING must transition to RESET when the attacker's ground-hit cue fires,
+    even though the target is still in range and above ground."""
     fsm, _, _ = _make_fsm_in_engaging(
-        track_position=[1.0, 1.0, 0.0],
-        ground_threshold=0.1,
+        track_position=[1.0, 2.0, 1.0],  # in range, above ground
+        ground_hit=True,
     )
     fsm.step()
     assert fsm.state == AtlasFSM.RESET
+
+
+def test_engage_stays_engaged_for_low_target_without_cue():
+    """ENGAGING must NOT exit on a low/descending target by itself: ground hits
+    come only from the emitted cue, never from the track Z estimate."""
+    fsm, _, _ = _make_fsm_in_engaging(
+        track_position=[1.0, 1.0, 0.0],  # at the floor, but no cue
+        ground_hit=False,
+    )
+    fsm.step()
+    assert fsm.state == AtlasFSM.ENGAGING
 
 
 # ---------------------------------------------------------------------------
@@ -896,6 +907,7 @@ def _make_fsm_in_reset(intercept=None):
         fcr=StubFCR(position=[1.0, 1.0, 1.0]),
         track_filter=track_filter,
         ballistic_predictor=None,
+        ground_hit_link=StubGroundHitLink(),
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,

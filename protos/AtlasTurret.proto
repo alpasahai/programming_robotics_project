@@ -14,7 +14,10 @@ PROTO AtlasTurret [
       Receiver {
         name "FCR_CUE_RECEIVER"
         channel 1
-        allowedChannels [1]
+      }
+      Receiver {
+        name "ATTACKER_GROUND_HIT_RECEIVER"
+        channel 2
       }
 
       HingeJoint {

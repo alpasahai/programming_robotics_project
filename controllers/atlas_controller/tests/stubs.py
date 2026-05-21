@@ -83,6 +83,24 @@ class StubCueLink:
         return self.cue
 
 
+class StubGroundHitLink:
+    """Test double for AttackerGroundHitLink.
+
+    ``hit_this_step()`` returns the configured flag (default False).
+    ``update()`` is a no-op. Set ``.hit`` between steps to simulate a pulse.
+    """
+
+    def __init__(self, hit=False, count=0):
+        self.hit = hit
+        self.count = count
+
+    def update(self):
+        pass
+
+    def hit_this_step(self):
+        return self.hit
+
+
 class StubTrackFilter:
     def __init__(self, position, velocity):
         self._position = position

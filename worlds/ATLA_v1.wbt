@@ -32,7 +32,7 @@ DEF PROJECTILE Projectile {
 DEF TURRET_BASE AtlasTurret {
 }
 DEF SEARCH_RADAR SearchRadar {
-  mastHeight 1
+  mastHeight 2.5
 }
 DEF ATTACKER Attacker {
 }
