@@ -2,7 +2,7 @@
 
 ## BallisticTrajectoryPredictor
 
-The subsystem responsible for estimating the future position of a tracked projectile using ballistic equations. Operates during the `PREDICT` FSM state. Takes the position history from the Track Filter and outputs an Intercept Point. Distinct from the future `AttackPredictor`.
+The subsystem responsible for estimating the future position of a tracked projectile using ballistic equations. Operates during the `TRACK_PREDICT` FSM state. Takes the position history from the Track Filter and outputs an Intercept Point. Distinct from the future `AttackPredictor`.
 
 ## AttackPredictor
 
@@ -46,7 +46,7 @@ The predicted future position of the projectile that the turret should aim at. C
 
 ## FSM (Finite State Machine)
 
-The central control module governing all turret behaviour. States: `SEARCH`, `ACQUIRE`, `TRACK`, `PREDICT`, `AIMING`, `ENGAGING`, `RESET`.
+The central control module governing all turret behaviour. Five states: `IDLE` (hold a fixed beam direction, wait for a Search Radar cue), `AIM` (slew toward the cue until the FCR locks), `TRACK_PREDICT` (fuse both sensors, follow the filtered estimate, predict the intercept, and fire once the predicted-vs-observed error converges), `ENGAGING` (hold aim at the fired intercept), and `RESET` (wipe the filter and return to `IDLE`). Readiness to fire is the `ENGAGING` state itself — there is no separate flag. See ADR-0012.
 
 ## Turret Weapon
 

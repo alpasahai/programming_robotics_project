@@ -138,6 +138,26 @@ class TrackFilter:
         self.kf.update(np.array(measurement, dtype=float).reshape(3, 1))
         self._initialised = True
 
+    def update_search(self, measurement: list[float]) -> None:
+        """Fuse a Search Radar measurement into the filter.
+
+        Sets kf.R to R_search * I₃ (high noise — the Search Radar is coarse)
+        before calling the Kalman update step, then marks the filter as
+        initialised. Mirrors update_fcr() but with the weaker, less-trusted
+        noise covariance, so a Search Radar fix nudges the estimate while the
+        precise FCR measurement dominates.
+
+        Driven by the FSM's TRACK_PREDICT state (genuine dual-sensor fusion);
+        the FCR path runs continuously from the main loop. See ADR-0003.
+
+        Args:
+            measurement: Turret-relative [dx, dy, dz] from a Search Radar cue,
+                         in metres, Z-up ENU frame.
+        """
+        self.kf.R = np.eye(3) * self._R_search
+        self.kf.update(np.array(measurement, dtype=float).reshape(3, 1))
+        self._initialised = True
+
     def _reset_state(self) -> None:
         """Zero the Kalman state, reset covariance to initial uncertainty, and
         clear the initialised flag.
@@ -153,7 +173,7 @@ class TrackFilter:
     def reset(self) -> None:
         """Reinitialise Kalman state and covariance to defaults.
 
-        Called at the ACQUIRE transition when a new target is locked onto.
+        Called on AIM entry (new target) and on RESET (engagement complete).
         Clears stale history from any previous engagement and resets
         is_initialised() to False so the FSM waits for a fresh measurement.
         """

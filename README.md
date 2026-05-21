@@ -9,12 +9,12 @@ The system is designed using embedded intelligence principles and can be deploye
 
 ## System Architecture:  
 ATLAS consists of four main subsystems: 
-  #### Perception Module (TRACK → PREDICT) (SENSE) 
+  #### Perception Module (AIM → TRACK_PREDICT) (SENSE) 
   -> Processes the inputs from the tracking radar and external cues to track the projectile and produce estimates based on positioning and velocity. 
-  ### Prediction Module (PREDICT → AIMING) (THINK)  
+  ### Prediction Module (TRACK_PREDICT) (THINK)  
   -> Using data to model projectile trajectory and estimate future interception points. It will validate predictions based on ALTAS’s constraints. 
-  #### Control Module (AIMING → ENGAGING) (ACT)  
-  -> Converts predicted intercept coordinates into the pan and tilt motor commands. It then actives laser when conditions are satisfied. 
+  #### Control Module (TRACK_PREDICT → ENGAGING) (ACT)  
+  -> Converts predicted intercept coordinates into the pan and tilt motor commands. Reaching the `ENGAGING` state is itself the signal that the turret is ready to fire on the validated intercept. 
   #### FSM Control Module (RESET) (SAFETY)  
   -> Governs all the modules and enforces the multi-condition decision logic. It also prioritises fail-safe behaviour through the RESET mechanism. 
 
