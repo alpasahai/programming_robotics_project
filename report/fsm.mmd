@@ -1,0 +1,21 @@
+---
+title: ATLAS Finite State Machine
+---
+stateDiagram
+    [*] --> IDLE
+
+    state "TRACK & PREDICT" as TRACK_PREDICT
+
+    IDLE --> AIM : Search Radar cue received
+    IDLE --> RESET : Ground hit cue
+
+    AIM --> TRACK_PREDICT : FCR beam finds target
+    AIM --> RESET : Ground hit cue
+
+    TRACK_PREDICT --> ENGAGING : Prediction error small enough to fire
+    TRACK_PREDICT --> RESET : Ground hit cue
+
+    ENGAGING --> RESET : Projectile destroyed
+    ENGAGING --> RESET : Ground hit cue
+
+    RESET --> IDLE : System reset complete
