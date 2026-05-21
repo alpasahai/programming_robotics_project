@@ -41,16 +41,16 @@ from sweep_control import next_bounded_sweep_target
 SEARCH_RADAR_MAX_RANGE_M = 20.0
 SEARCH_RADAR_VERTICAL_FOV_RAD = math.pi / 2
 SEARCH_RADAR_BEAM_WIDTH_RAD = 0.35
-SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.32
+SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.15
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20
 SEARCH_RADAR_NOISE_STD_M = 0.2
 SEARCH_RADAR_MIN_ANGLE_RAD = 0.0
 SEARCH_RADAR_MAX_ANGLE_RAD = math.pi
 SEARCH_RADAR_SWEEP_TARGET_TOLERANCE_RAD = 0.02
-# The radar's mounting geometry (pole / endpoint / beam height) lives solely in
-# SearchRadar.proto. The controller derives the phase centre by reading the
-# rendered SR_FOV_BEAM node instead of duplicating those z offsets here — change
-# the beam height in the proto (fovBeamTranslation z) and the controller follows.
+# The radar's mounting geometry lives solely in SearchRadar.proto, driven by its
+# single `mastHeight` field. The controller derives the phase centre by reading
+# the rendered SR_FOV_BEAM node instead of duplicating z offsets here — set
+# `SearchRadar { mastHeight ... }` in the world and the controller follows.
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -217,16 +217,14 @@ if fov_beam_node is None or fov_cone_node is None:
     )
 else:
     beam_spec = search_radar.get_beam_visual_spec()
-    # Set only the spec-derived cone centre (x/y) and dimensions on the exposed
-    # PROTO params. Preserve the proto's mount height (z) — the beam height lives
-    # in SearchRadar.proto's fovBeamTranslation, not here, so changing it there
-    # is honoured rather than overwritten.
-    mount_z = radar_node.getField("fovBeamTranslation").getSFVec3f()[2]
-    radar_node.getField("fovBeamTranslation").setSFVec3f(
+    # Set only the spec-derived cone offset (x/y) and dimensions. The beam's
+    # mounting height now lives in the proto (mastHeight drives the mount Pose),
+    # so the cone offset's z stays 0 and we no longer touch beam height here.
+    radar_node.getField("fovConeOffset").setSFVec3f(
         [
             beam_spec.cone_center_local[0],
             beam_spec.cone_center_local[1],
-            mount_z + beam_spec.cone_center_local[2],
+            beam_spec.cone_center_local[2],
         ]
     )
     radar_node.getField("fovConeHeight").setSFFloat(beam_spec.cone_height)
@@ -236,8 +234,7 @@ else:
         "FOV visual cone configured from SearchRadar visual spec: "
         "origin_world=%s centre_azimuth=%.3frad range=%.2fm "
         "beam_width=%.3frad vertical_fov=%.3frad half_angle=%.3frad "
-        "cone_height=%.3fm cone_radius=%.3fm "
-        "local_center=%s mount_z=%.3fm",
+        "cone_height=%.3fm cone_radius=%.3fm local_center=%s",
         [round(v, 3) for v in beam_spec.origin_world],
         beam_spec.centre_azimuth,
         beam_spec.max_range,
@@ -247,7 +244,6 @@ else:
         beam_spec.cone_height,
         beam_spec.cone_radius,
         [round(v, 3) for v in beam_spec.cone_center_local],
-        mount_z,
     )
 
 # ---------------------------------------------------------------------------

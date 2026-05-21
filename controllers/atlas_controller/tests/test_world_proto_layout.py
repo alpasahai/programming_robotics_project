@@ -43,12 +43,13 @@ def test_search_radar_proto_preserves_runtime_fov_contracts():
 
     assert "DEF SR_FOV_BEAM Pose" in search_radar_proto
     assert "geometry DEF SR_FOV_CONE Cone" in search_radar_proto
-    # FOV visual dimensions are exposed PROTO fields the controller writes at
-    # runtime (defaults must match the spec); internal nodes bind via IS.
-    assert "field SFVec3f fovBeamTranslation 0 10 1.1" in search_radar_proto
+    # Radar height is a single template knob; the FOV cone offset/dimensions are
+    # exposed PROTO fields the controller writes at runtime, bound via IS.
+    assert "field SFFloat mastHeight 2" in search_radar_proto
+    assert "field SFVec3f fovConeOffset 0 10 0" in search_radar_proto
     assert "field SFFloat fovConeHeight 20" in search_radar_proto
     assert "field SFFloat fovConeRadius 3.5" in search_radar_proto
-    assert "translation IS fovBeamTranslation" in search_radar_proto
+    assert "translation IS fovConeOffset" in search_radar_proto
     assert "height IS fovConeHeight" in search_radar_proto
     assert "bottomRadius IS fovConeRadius" in search_radar_proto
     assert 'name "SEARCH_RADAR_ANGLE"' in search_radar_proto
