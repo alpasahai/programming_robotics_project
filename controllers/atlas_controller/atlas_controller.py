@@ -24,6 +24,7 @@ from track_filter import TrackFilter
 from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
 from fsm import AtlasFSM, SensorSuite, TurretHardware
 from telemetry import TrackTelemetry
+from scene import DEF_PROJECTILE
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -36,6 +37,25 @@ from telemetry import TrackTelemetry
 # ---------------------------------------------------------------------------
 
 log = configure("AtlasController", log_file="atlas_telemetry.log")
+
+# ---------------------------------------------------------------------------
+# Tuning constants
+#
+# Sensor geometry/noise and Kalman filter noise, kept here as a single labelled
+# place (mirrors the SEARCH_RADAR_* block in search_radar_controller). Note the
+# FCR detection range (20 m) is wider than the FSM engagement range
+# (FSMConfig.max_range, 10 m): the turret detects farther than it shoots.
+# ---------------------------------------------------------------------------
+
+# Fire-Control Radar — narrow-beam, precise.
+FCR_FOV_HALF_ANGLE_RAD = 0.1  # ~5.7° half-angle
+FCR_MAX_RANGE_M = 20.0        # detection range (cf. FSM engagement range)
+FCR_NOISE_STD_M = 0.02        # low noise — FCR is precise (metres std)
+
+# Track filter (Kalman) noise.
+TRACK_FILTER_R_FCR = 0.001    # FCR measurement noise variance (m²) — low, trusted
+TRACK_FILTER_R_SEARCH = 0.1   # retained for constructor; update_search() removed
+TRACK_FILTER_Q = 0.01         # process noise scale — small for near-ballistic motion
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -54,9 +74,9 @@ receiver = robot.getDevice("FCR_CUE_RECEIVER")
 receiver.enable(timestep)
 
 # --- Scene nodes ---
-projectile = robot.getFromDef("PROJECTILE")
+projectile = robot.getFromDef(DEF_PROJECTILE)
 if projectile is None:
-    raise RuntimeError("Could not find DEF PROJECTILE in the world file.")
+    raise RuntimeError(f"Could not find DEF {DEF_PROJECTILE} in the world file.")
 
 turret_position = (
     robot.getSelf().getPosition()
@@ -69,21 +89,20 @@ fcr = FireControlRadar(
     projectile,
     fcr_position=turret_position,   # FCR is co-located with the turret
     turret_position=turret_position,
-    fov_half_angle=0.1,             # ~5.7° half-angle — narrow FCR beam
-    max_range=20.0,                 # metres — tune in Webots if needed
-    noise_std=0.02,                 # low noise — FCR is precise (metres std)
+    fov_half_angle=FCR_FOV_HALF_ANGLE_RAD,
+    max_range=FCR_MAX_RANGE_M,
+    noise_std=FCR_NOISE_STD_M,
 )
 cue_link = SearchRadarLink(receiver)
 
 # --- State estimator ---
-# R_fcr=0.001 (trusts FCR heavily); R_search retained as a constructor
-# parameter (TrackFilter still accepts it), but update_search() is gone —
-# only update_fcr() is called. Q=0.01 (small process noise, near-ballistic).
+# R_search is retained as a constructor parameter (TrackFilter still accepts it)
+# but update_search() is gone — only update_fcr() is called.
 track_filter = TrackFilter(
     timestep_ms=timestep,
-    R_fcr=0.001,  # FCR measurement noise variance (m²) — low, trusted
-    R_search=0.1,  # retained for TrackFilter constructor; update_search removed
-    Q=0.01,  # process noise scale — small for near-ballistic motion
+    R_fcr=TRACK_FILTER_R_FCR,
+    R_search=TRACK_FILTER_R_SEARCH,
+    Q=TRACK_FILTER_Q,
 )
 
 # --- Ballistic predictor ---

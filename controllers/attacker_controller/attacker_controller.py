@@ -19,15 +19,18 @@ from controller import Supervisor
 
 from atlas_logging import configure
 from projectile import Projectile, ProjectileConfig
+from scene import DEF_PROJECTILE
 
 log = configure("AttackerController", log_file="attacker_telemetry.log")
 
 robot = Supervisor()
 timestep = int(robot.getBasicTimeStep())
 
-projectile_node = robot.getFromDef("PROJECTILE")
+projectile_node = robot.getFromDef(DEF_PROJECTILE)
 if projectile_node is None:
-    raise RuntimeError("[ATTACKER] Could not find DEF PROJECTILE in the world file.")
+    raise RuntimeError(
+        f"[ATTACKER] Could not find DEF {DEF_PROJECTILE} in the world file."
+    )
 
 # Spawn parameters surfaced here at the controller level.
 config = ProjectileConfig(

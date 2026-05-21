@@ -32,6 +32,7 @@ import struct
 from controller import Supervisor
 
 from atlas_logging import configure
+from scene import DEF_PROJECTILE, DEF_TURRET_BASE
 from search_radar import SearchRadar
 
 # Search Radar sensor and visualisation parameters. Keep these constants as the
@@ -109,13 +110,13 @@ else:
 # Scene nodes — confirmed DEF names from worlds/ATLA_v1.wbt
 # ---------------------------------------------------------------------------
 
-projectile_node = robot.getFromDef("PROJECTILE")
+projectile_node = robot.getFromDef(DEF_PROJECTILE)
 if projectile_node is None:
-    raise RuntimeError("[SR] Could not find DEF PROJECTILE in the world file.")
+    raise RuntimeError(f"[SR] Could not find DEF {DEF_PROJECTILE} in the world file.")
 
-turret_node = robot.getFromDef("TURRET_BASE")
+turret_node = robot.getFromDef(DEF_TURRET_BASE)
 if turret_node is None:
-    raise RuntimeError("[SR] Could not find DEF TURRET_BASE in the world file.")
+    raise RuntimeError(f"[SR] Could not find DEF {DEF_TURRET_BASE} in the world file.")
 
 radar_node = robot.getSelf()
 
