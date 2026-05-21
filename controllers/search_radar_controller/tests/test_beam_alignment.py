@@ -41,3 +41,82 @@ def test_visual_pose_east_facing_orientation():
     assert direction == [1.0, 0.0, 0.0]
     assert math.isclose(azimuth, math.pi / 2)
     assert origin == [0.0, 0.0, 0.0]            # 10.0 - 1.0 * (20/2)
+
+
+from beam_alignment import BeamAlignment, BeamInfo
+
+
+class StubNode:
+    """Minimal Webots node: fixed orientation matrix + world position."""
+
+    def __init__(self, orientation, position):
+        self._orientation = orientation
+        self._position = position
+
+    def getOrientation(self):
+        return self._orientation
+
+    def getPosition(self):
+        return self._position
+
+
+class StubAngleSensor:
+    def __init__(self, value):
+        self._value = value
+
+    def getValue(self):
+        return self._value
+
+
+class RecordingRadar:
+    """Captures the last set_beam_pose() call (azimuth + origin)."""
+
+    def __init__(self):
+        self.azimuth = None
+        self.origin = "unset"   # sentinel distinct from a real None argument
+
+    def set_beam_pose(self, azimuth, origin=None):
+        self.azimuth = azimuth
+        self.origin = origin
+
+
+def test_apply_uses_visual_node_when_present():
+    """With an FOV node, apply() derives origin + azimuth from its pose and
+    returns a 'visual' BeamInfo. The angle sensor is ignored."""
+    node = StubNode([0, 1, 0, 0, 0, 0, 0, 0, 0], [10.0, 0.0, 0.0])  # +Y -> world +X
+    align = BeamAlignment(node, StubAngleSensor(1.23), max_range=20.0)
+    radar = RecordingRadar()
+
+    info = align.apply(radar)
+
+    assert info.source == "visual"
+    assert math.isclose(radar.azimuth, math.pi / 2)
+    assert radar.origin == [0.0, 0.0, 0.0]
+    assert info.direction == [1.0, 0.0, 0.0]
+
+
+def test_apply_falls_back_to_joint_when_no_visual_node():
+    """Without an FOV node, apply() derives azimuth only (origin left as None)
+    from the angle sensor and returns a 'joint' BeamInfo."""
+    align = BeamAlignment(None, StubAngleSensor(math.radians(90)), max_range=20.0)
+    radar = RecordingRadar()
+
+    info = align.apply(radar)
+
+    assert info.source == "joint"
+    assert radar.origin is None
+    assert math.isclose(radar.azimuth, 2 * math.pi - math.radians(90))
+    assert math.isclose(info.azimuth, 2 * math.pi - math.radians(90))
+
+
+def test_apply_self_scan_when_no_devices():
+    """With neither device, apply() leaves the radar untouched (it self-scans via
+    its own scan_rate) and returns a 'self' BeamInfo."""
+    align = BeamAlignment(None, None, max_range=20.0)
+    radar = RecordingRadar()
+
+    info = align.apply(radar)
+
+    assert info.source == "self"
+    assert radar.azimuth is None       # set_beam_pose was never called
+    assert info.azimuth is None
