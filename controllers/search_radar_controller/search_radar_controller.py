@@ -20,7 +20,7 @@ crosses the boundary, never a node handle.
 
 DEF names (confirmed from worlds/ATLA_v1.wbt)
 ----------------------------------------------
-  PROJECTILE   — the SimulatedProjectile node
+  PROJECTILE   — the Projectile node
   TURRET_BASE  — the AtlasTurret node (turret origin, world frame)
   SEARCH_RADAR — this robot's own node (base pose; phase-centre offset is
                  defined by SearchRadar.proto)
@@ -385,3 +385,4 @@ while robot.step(timestep) != -1:
             wy,
             wz,
         )
+

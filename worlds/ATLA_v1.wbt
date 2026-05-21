@@ -6,7 +6,7 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
 IMPORTABLE EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/joints/protos/HingeJointWithBacklash.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
-EXTERNPROTO "../protos/SimulatedProjectile.proto"
+EXTERNPROTO "../protos/Projectile.proto"
 EXTERNPROTO "../protos/AtlasTurret.proto"
 EXTERNPROTO "../protos/SearchRadar.proto"
 
@@ -24,9 +24,11 @@ TexturedBackground {
 }
 TexturedBackgroundLight {
 }
-DEF PROJECTILE SimulatedProjectile {
+DEF PROJECTILE Projectile {
 }
 DEF TURRET_BASE AtlasTurret {
 }
 DEF SEARCH_RADAR SearchRadar {
 }
+
+

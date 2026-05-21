@@ -42,8 +42,9 @@ The turret destroys the incoming ball by firing a physical projectile (the Bulle
 
 ## Bullet
 
-The turret's fired projectile, defined by `AtlasBullet.proto`. A self-reporting `Robot` carrying a `bumper`-type `TouchSensor` and the `atlas_bullet_controller`; it detects its own collisions and publishes a hit via its `customData` field. Spawned dynamically by the turret supervisor at fire time and removed when the shot resolves. Distinct from the incoming ball (`SimulatedProjectile`), which the turret aims *at*.
+The turret's fired projectile, defined by `AtlasBullet.proto`. A self-reporting `Robot` carrying a `bumper`-type `TouchSensor` and the `atlas_bullet_controller`; it detects its own collisions and publishes a hit via its `customData` field. Spawned dynamically by the turret supervisor at fire time and removed when the shot resolves. Distinct from the incoming ball (`Projectile`), which the turret aims *at*.
 
 ## Fire Command
 
 The one-shot event the FSM emits on entering the `ENGAGING` state, carrying the intercept/aim for the shot. The FSM only produces the event; `atlas_controller` consumes it to spawn and launch the Bullet. Keeps node spawning out of the FSM so the FSM stays pure and unit testable.
+
