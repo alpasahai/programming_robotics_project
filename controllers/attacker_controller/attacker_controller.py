@@ -34,7 +34,7 @@ if projectile_node is None:
 
 # Spawn parameters surfaced here at the controller level.
 config = ProjectileConfig(
-    spawn_position=[0, -3, 0.5],
+    spawn_position=[0, -10, 0.5],
     launch_velocity=[0, 4, 6, 0, 0, 0],
     floor_contact_z_m=0.1,
     respawn_delay_ms=2000,
