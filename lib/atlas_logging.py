@@ -26,7 +26,7 @@ import os
 # ---------------------------------------------------------------------------
 LOG_LEVELS = {
     "AttackerController": "DEBUG",
-    "AtlasController": "INFO",
+    "AtlasController": "DEBUG",
     "SearchRadarController": "INFO",
 }
 DEFAULT_LEVEL = "INFO"

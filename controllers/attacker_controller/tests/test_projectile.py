@@ -1,7 +1,7 @@
 """Unit tests for the attacker's Projectile spawn/despawn state machine."""
 
 from projectile import Projectile, ProjectileConfig
-from stubs import StubProjectileNode, StubContact
+from attacker_stubs import StubProjectileNode, StubContact
 
 
 def _make(config=None, on_ground_hit=None, on_bullet_hit=None):
