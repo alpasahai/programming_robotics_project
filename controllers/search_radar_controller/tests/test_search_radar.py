@@ -920,3 +920,33 @@ def test_get_fresh_detections_excludes_buffered_but_aged_track():
     radar.update()
     assert radar.get_fresh_detections() == []                   # aged out of "fresh"
     assert [d.track_id for d in radar.get_detections()] == [0]   # still buffered
+
+
+# ---------------------------------------------------------------------------
+# Beam-pose setter (Task 2) — public override of azimuth (+ optional origin)
+# ---------------------------------------------------------------------------
+
+def test_set_beam_pose_sets_azimuth_only_when_origin_omitted():
+    """Omitting origin overrides azimuth but leaves the phase centre untouched."""
+    radar = _make_radar([StubProjectile([[0.0, 10.0, 0.0]])])
+    original_origin = list(radar._radar_position)
+    radar.set_beam_pose(math.radians(45))
+    assert radar._beam_azimuth == math.radians(45)
+    assert radar._radar_position == original_origin
+
+
+def test_set_beam_pose_sets_origin_and_azimuth():
+    """Passing origin overrides both the phase centre and the azimuth."""
+    radar = _make_radar([StubProjectile([[0.0, 10.0, 0.0]])])
+    radar.set_beam_pose(math.radians(30), origin=[1.0, 2.0, 3.0])
+    assert radar._beam_azimuth == math.radians(30)
+    assert radar._radar_position == [1.0, 2.0, 3.0]
+
+
+def test_set_beam_pose_copies_origin_list():
+    """The stored origin must be a copy, not the caller's list."""
+    radar = _make_radar([StubProjectile([[0.0, 10.0, 0.0]])])
+    caller_origin = [1.0, 2.0, 3.0]
+    radar.set_beam_pose(0.0, origin=caller_origin)
+    caller_origin[0] = 99.0
+    assert radar._radar_position == [1.0, 2.0, 3.0]
