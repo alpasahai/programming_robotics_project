@@ -38,6 +38,11 @@ def test_projectile_and_turret_protos_preserve_controller_contracts():
     # Position sensors the controller reads for the turret's real aim (fed to the FCR).
     assert 'name "PAN_SENSOR"' in turret_proto
     assert 'name "TILT_SENSOR"' in turret_proto
+    # Joint axes must realise the FSM/geometry az/el convention (lib/geometry.py):
+    # pan about -Z (so +pan increases azimuth toward +X), tilt about +X (so tilt
+    # elevates the +Y boresight instead of spinning it about its own axis).
+    assert "axis 0 0 -1" in turret_proto  # PAN
+    assert "axis 1 0 0" in turret_proto   # TILT
 
 
 def test_search_radar_proto_preserves_runtime_fov_contracts():
