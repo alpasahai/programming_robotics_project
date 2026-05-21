@@ -1,33 +1,43 @@
-"""Search Radar Webots controller.
+"""Search Radar Webots controller — thin Supervisor orchestration.
 
-Thin Supervisor loop: reads the projectile ground-truth position, drives the
-radar's spin motor, runs SearchRadar.update() each step, selects the first
-live track, converts the turret-relative Detection position back to world frame,
-and broadcasts a 24-byte struct.pack("ddd", x, y, z) payload on channel 1 via
-the SR_CUE_EMITTER radio device.
+Constructs the components, wires them, then runs a per-step loop where the
+decision-making delegates to tested modules (mirrors atlas_controller.py):
+  - beam_alignment.BeamAlignment aligns the detection beam to the rendered FOV
+    node (or the joint-angle sensor) each step;
+  - SearchRadar gates detections and buffers tracks;
+  - cue_emitter.CueEmitter selects a fresh detection, converts it to world frame,
+    and broadcasts struct.pack("ddd", x, y, z) on channel 1 via SR_CUE_EMITTER;
+  - cue_telemetry.CueTelemetry owns all per-step logging.
 
-World-frame conversion choice
-------------------------------
-Detection.position is turret-relative [dx, dy, dz].  The simplest correct path
-to a world-frame cue is:
+The only hardware logic that remains inline is the bounded-sweep motor drive:
+when the joint-angle sensor is present the motor ping-pongs between
+SEARCH_RADAR_MIN_ANGLE_RAD and SEARCH_RADAR_MAX_ANGLE_RAD via
+sweep_control.next_bounded_sweep_target; otherwise it spins continuously.
 
-    world_pos[i] = detection.position[i] + turret_position[i]
+ADR-0006 (sensor membrane): only a bare world coordinate crosses the radio link
+to ATLAS. Node handles and track_ids stay inside this process; the controller
+talks to SearchRadar only through its public API (get_detections,
+get_fresh_detections, set_beam_pose — applied via BeamAlignment).
 
-where turret_position is a one-time Supervisor snapshot of DEF TURRET_BASE.
-This avoids any dependency on projectile-node handles inside the main loop and
-keeps the SearchRadar membrane intact (ADR-0006): only the cue coordinate
-crosses the boundary, never a node handle.
+The radar's mounting geometry lives solely in SearchRadar.proto (its mastHeight
+field). The controller derives the phase centre by reading the rendered
+SR_FOV_BEAM node rather than duplicating z offsets here.
 
-DEF names (confirmed from worlds/ATLA_v1.wbt)
-----------------------------------------------
+DEF names (confirmed from worlds/ATLA_v1.wbt):
   PROJECTILE   — the Projectile node
   TURRET_BASE  — the AtlasTurret node (turret origin, world frame)
   SEARCH_RADAR — this robot's own node (base pose; phase-centre offset is
                  defined by SearchRadar.proto)
+
+Execution order each step:
+  0. Sweep  — advance the bounded-sweep motor target (only with angle feedback)
+  1. Align  — beam_alignment.apply(search_radar)
+  2. Sense  — search_radar.update()
+  3. Emit   — cue_emitter.emit(fresh detections)
+  4. Report — telemetry.report(...)  (development instrument; no control effect)
 """
 
 import math
-import struct
 
 from controller import Supervisor
 
@@ -35,6 +45,9 @@ from atlas_logging import configure
 from scene import DEF_PROJECTILE, DEF_TURRET_BASE
 from search_radar import SearchRadar
 from sweep_control import next_bounded_sweep_target
+from beam_alignment import BeamAlignment, visual_beam_pose_to_search_frame
+from cue_emitter import CueEmitter
+from cue_telemetry import CueTelemetry
 
 # Search Radar sensor and visualisation parameters. Keep these constants as the
 # single source for both the SearchRadar model and the visible debug beam.
@@ -47,35 +60,24 @@ SEARCH_RADAR_NOISE_STD_M = 0.2
 SEARCH_RADAR_MIN_ANGLE_RAD = 0.0
 SEARCH_RADAR_MAX_ANGLE_RAD = math.pi
 SEARCH_RADAR_SWEEP_TARGET_TOLERANCE_RAD = 0.02
-# The radar's mounting geometry lives solely in SearchRadar.proto, driven by its
-# single `mastHeight` field. The controller derives the phase centre by reading
-# the rendered SR_FOV_BEAM node instead of duplicating z offsets here — set
-# `SearchRadar { mastHeight ... }` in the world and the controller follows.
 
 # ---------------------------------------------------------------------------
-# Telemetry logging
-#
-# Webots console via StreamHandler and a controller-local file trace for review
-# after a run. The console level is set centrally in lib/atlas_logging.py
+# Telemetry logging — console level set centrally in lib/atlas_logging.py
 # (LOG_LEVELS["SearchRadarController"]); override per run with
 # SEARCHRADARCONTROLLER_LOG_LEVEL or ATLAS_LOG_LEVEL.
 # ---------------------------------------------------------------------------
-
 log = configure("SearchRadarController", log_file="search_radar_telemetry.log")
+log.info("SEARCH RADAR CONTROLLER STARTED")
 
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
-
 robot = Supervisor()
 timestep = int(robot.getBasicTimeStep())
-
-log.info("SEARCH RADAR CONTROLLER STARTED")
 
 # ---------------------------------------------------------------------------
 # Devices
 # ---------------------------------------------------------------------------
-
 motor = robot.getDevice("SEARCH_RADAR_MOTOR")
 if motor is None:
     log.error("SEARCH_RADAR_MOTOR not found")
@@ -121,7 +123,6 @@ else:
 # ---------------------------------------------------------------------------
 # Scene nodes — confirmed DEF names from worlds/ATLA_v1.wbt
 # ---------------------------------------------------------------------------
-
 projectile_node = robot.getFromDef(DEF_PROJECTILE)
 if projectile_node is None:
     raise RuntimeError(f"[SR] Could not find DEF {DEF_PROJECTILE} in the world file.")
@@ -147,53 +148,26 @@ log.info(
     "radar_origin_position (world) = %s", [round(v, 3) for v in radar_origin_position]
 )
 
-
-def _joint_angle_to_search_azimuth(joint_angle: float) -> float:
-    """Convert Webots +Z joint angle to SearchRadar azimuth convention.
-
-    SearchRadar azimuth uses x = sin(az), y = cos(az), so positive azimuth
-    turns local +Y toward +X. Webots positive rotation about +Z turns local +Y
-    toward -X. The physical beam azimuth is therefore the negative joint angle.
-    """
-    return (-joint_angle) % (2 * math.pi)
-
-
-def _visual_beam_pose_to_search_frame(beam_node, beam_range: float):
-    """Derive SearchRadar origin and azimuth from the rendered FOV node.
-
-    Webots returns a node orientation matrix in row-major order. The second
-    column is the node's local +Y axis expressed in world coordinates, which
-    is the direction the SR_FOV_BOX extends in SearchRadar.proto.
-    """
-    orientation = beam_node.getOrientation()
-    direction = [orientation[1], orientation[4], orientation[7]]
-    center = beam_node.getPosition()
-    origin = [center[i] - direction[i] * (beam_range / 2.0) for i in range(3)]
-    azimuth = math.atan2(direction[0], direction[1]) % (2 * math.pi)
-    return origin, azimuth, direction
-
-
 # Seed the phase centre (cone apex) by reading the rendered beam node — the same
-# derivation the main loop applies every step. This initial value is overwritten
+# derivation BeamAlignment applies every step. This initial value is overwritten
 # on the first loop iteration before any detection runs, so it only covers the
 # pre-first-step window and the log below; the proto geometry, not a constant,
 # determines it.
 if fov_beam_node is not None:
-    radar_position, _, _ = _visual_beam_pose_to_search_frame(
-        fov_beam_node, SEARCH_RADAR_MAX_RANGE_M
+    radar_position, _, _ = visual_beam_pose_to_search_frame(
+        fov_beam_node.getOrientation(),
+        fov_beam_node.getPosition(),
+        SEARCH_RADAR_MAX_RANGE_M,
     )
 else:
     radar_position = list(radar_origin_position)  # degraded: no beam visual present
 log.info("radar_phase_center    (world) = %s", [round(v, 3) for v in radar_position])
 
-
 # ---------------------------------------------------------------------------
-# SearchRadar — parameter values copied verbatim from atlas_controller.py
-# (Increment 1 constructor call, lines 100-111).
+# Components
 # ---------------------------------------------------------------------------
-
 search_radar = SearchRadar(
-    [projectile_node],  # list of all projectile nodes in the scene
+    [projectile_node],  # list index = track_id (ADR-0006)
     turret_position,
     radar_position,
     noise_std=SEARCH_RADAR_NOISE_STD_M,  # high noise — SearchRadar is coarse
@@ -205,11 +179,10 @@ search_radar = SearchRadar(
     track_timeout=SEARCH_RADAR_TRACK_TIMEOUT_STEPS,
 )
 
-# ---------------------------------------------------------------------------
-# Visible FOV beam
-# ---------------------------------------------------------------------------
-
-
+# Visible FOV beam — drive the exposed PROTO parameters from the SearchRadar
+# visual spec so the rendered cone matches the software detection gate. The
+# beam's mounting height lives in the proto (mastHeight drives the mount Pose),
+# so the cone offset's z stays at the spec value and we do not touch height here.
 if fov_beam_node is None or fov_cone_node is None:
     log.warning(
         "Search Radar FOV visual nodes not found via getFromProtoDef; "
@@ -217,9 +190,6 @@ if fov_beam_node is None or fov_cone_node is None:
     )
 else:
     beam_spec = search_radar.get_beam_visual_spec()
-    # Set only the spec-derived cone offset (x/y) and dimensions. The beam's
-    # mounting height now lives in the proto (mastHeight drives the mount Pose),
-    # so the cone offset's z stays 0 and we no longer touch beam height here.
     radar_node.getField("fovConeOffset").setSFVec3f(
         [
             beam_spec.cone_center_local[0],
@@ -229,7 +199,6 @@ else:
     )
     radar_node.getField("fovConeHeight").setSFFloat(beam_spec.cone_height)
     radar_node.getField("fovConeRadius").setSFFloat(beam_spec.cone_radius)
-
     log.info(
         "FOV visual cone configured from SearchRadar visual spec: "
         "origin_world=%s centre_azimuth=%.3frad range=%.2fm "
@@ -246,15 +215,20 @@ else:
         [round(v, 3) for v in beam_spec.cone_center_local],
     )
 
+beam_alignment = BeamAlignment(fov_beam_node, angle_sensor, SEARCH_RADAR_MAX_RANGE_M)
+cue_emitter = CueEmitter(emitter)
+telemetry = CueTelemetry(log)
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
-
 step_count = 0
 
 while robot.step(timestep) != -1:
     step_count += 1
 
+    # 0. Bounded sweep — flip the motor target at the sweep endpoints (only when
+    #    angle feedback is present; otherwise the motor spins continuously).
     if angle_sensor is not None and scan_target is not None:
         next_scan_target = next_bounded_sweep_target(
             joint_angle=angle_sensor.getValue(),
@@ -267,151 +241,20 @@ while robot.step(timestep) != -1:
             scan_target = next_scan_target
             motor.setPosition(scan_target)
 
-    # 1. Align the radar model to the actual rendered FOV node, then update.
-    #    This makes the proto visual the source of truth for beam direction and
-    #    phase-centre position, avoiding joint sign/frame assumptions.
-    visual_origin = None
-    visual_direction = None
-    if fov_beam_node is not None:
-        visual_origin, visual_azimuth, visual_direction = (
-            _visual_beam_pose_to_search_frame(fov_beam_node, search_radar._max_range)
-        )
-        search_radar._radar_position = visual_origin
-        search_radar._beam_azimuth = visual_azimuth
-    elif angle_sensor is not None:
-        search_radar._beam_azimuth = _joint_angle_to_search_azimuth(
-            angle_sensor.getValue()
-        )
+    # 1. Align the detection beam to the rendered FOV node (or joint angle),
+    #    making the proto visual the source of truth for beam direction and
+    #    phase-centre position.
+    beam = beam_alignment.apply(search_radar)
+
+    # 2. Sense — gate projectiles and refresh the track buffer.
     search_radar.update()
 
-    # 2. Select a target: first of get_detections(), matching old FSM logic.
+    # 3. Emit — select the first fresh detection, convert to world, broadcast.
     detections = search_radar.get_detections()
-    if not detections:
-        log.debug(
-            "[SR NO CUE] step=%d t=%.2fs detections=0 emitter_present=%s "
-            "model_beam_az=%.3f visual_beam_az=%s "
-            "visual_origin=%s visual_dir=%s",
-            step_count,
-            robot.getTime(),
-            emitter is not None,
-            search_radar._beam_azimuth,
-            (
-                "%.3f" % search_radar._beam_azimuth
-                if fov_beam_node is not None or angle_sensor is not None
-                else "n/a"
-            ),
-            (
-                "(%.3f, %.3f, %.3f)" % tuple(visual_origin)
-                if visual_origin is not None
-                else "n/a"
-            ),
-            (
-                "(%.3f, %.3f, %.3f)" % tuple(visual_direction)
-                if visual_direction is not None
-                else "n/a"
-            ),
-        )
-        continue  # nothing in view yet — no cue to emit
+    fresh_detections = search_radar.get_fresh_detections()
+    cue = cue_emitter.emit(fresh_detections, turret_position)
 
-    fresh_detections = [
-        detection
-        for detection in detections
-        if search_radar._track_buffer[detection.track_id][1] == 0
-    ]
-    if not fresh_detections:
-        buffered_track_ids = [detection.track_id for detection in detections]
-        buffered_track_ages = [
-            search_radar._track_buffer[detection.track_id][1]
-            for detection in detections
-        ]
-        log.debug(
-            "[SR BUFFER HELD] step=%d t=%.2fs buffered_track_ids=%s "
-            "track_ages=%s emitter_present=%s model_beam_az=%.3f "
-            "visual_beam_az=%s visual_origin=%s visual_dir=%s",
-            step_count,
-            robot.getTime(),
-            buffered_track_ids,
-            buffered_track_ages,
-            emitter is not None,
-            search_radar._beam_azimuth,
-            (
-                "%.3f" % search_radar._beam_azimuth
-                if fov_beam_node is not None or angle_sensor is not None
-                else "n/a"
-            ),
-            (
-                "(%.3f, %.3f, %.3f)" % tuple(visual_origin)
-                if visual_origin is not None
-                else "n/a"
-            ),
-            (
-                "(%.3f, %.3f, %.3f)" % tuple(visual_direction)
-                if visual_direction is not None
-                else "n/a"
-            ),
-        )
-        continue
-
-    chosen = fresh_detections[0]
-    _buffered_detection, track_age = search_radar._track_buffer[chosen.track_id]
-    cue_source = "fresh_beam_hit"
-
-    # 3. Convert turret-relative Detection.position → world frame.
-    #    Detection.position = [dx, dy, dz] relative to turret_position.
-    #    world_pos[i] = dx[i] + turret_position[i]
-    #    (See module docstring for rationale.)
-    wx = chosen.position[0] + turret_position[0]
-    wy = chosen.position[1] + turret_position[1]
-    wz = chosen.position[2] + turret_position[2]
-
-    # 4. Emit the world-frame cue over the radio link.
-    if emitter is not None:
-        emitter.send(struct.pack("ddd", wx, wy, wz))
-        log.info(
-            "[SR CUE SENT] step=%d t=%.2fs source=%s track_age=%d "
-            "sender=search_radar_controller device=SR_CUE_EMITTER channel=1 "
-            "track_id=%s model_beam_az=%.3f visual_beam_az=%s "
-            "visual_origin=%s visual_dir=%s "
-            "turret_relative=(%.3f, %.3f, %.3f) world=(%.3f, %.3f, %.3f)",
-            step_count,
-            robot.getTime(),
-            cue_source,
-            track_age,
-            chosen.track_id,
-            search_radar._beam_azimuth,
-            (
-                "%.3f" % search_radar._beam_azimuth
-                if fov_beam_node is not None or angle_sensor is not None
-                else "n/a"
-            ),
-            (
-                "(%.3f, %.3f, %.3f)" % tuple(visual_origin)
-                if visual_origin is not None
-                else "n/a"
-            ),
-            (
-                "(%.3f, %.3f, %.3f)" % tuple(visual_direction)
-                if visual_direction is not None
-                else "n/a"
-            ),
-            chosen.position[0],
-            chosen.position[1],
-            chosen.position[2],
-            wx,
-            wy,
-            wz,
-        )
-    else:
-        log.warning(
-            "[SR CUE DROPPED] step=%d t=%.2fs sender=search_radar_controller "
-            "reason=missing_emitter source=%s track_age=%d track_id=%s "
-            "world=(%.3f, %.3f, %.3f)",
-            step_count,
-            robot.getTime(),
-            cue_source,
-            track_age,
-            chosen.track_id,
-            wx,
-            wy,
-            wz,
-        )
+    # 4. Report — per-step development telemetry (no effect on the cue itself).
+    telemetry.report(
+        step_count, robot.getTime(), beam, detections, fresh_detections, cue
+    )
