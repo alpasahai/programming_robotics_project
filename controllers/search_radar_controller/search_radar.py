@@ -278,6 +278,19 @@ class SearchRadar:
         """
         return [det for det, _age in self._track_buffer.values()]
 
+    def get_fresh_detections(self) -> list[Detection]:
+        """Return Detection objects for tracks detected on the most recent update().
+
+        A track is *fresh* when its buffer age is 0 — the beam was directly on it
+        during the last ``update()``. Tracks held between beam passes (age > 0, kept
+        alive by ``track_timeout``) are excluded. This is the membrane-safe
+        replacement for the controller reaching into ``_track_buffer`` to test age.
+
+        Returns a fresh list each call; ``Detection`` is immutable so elements are
+        safe to share. Returns an empty list before the first ``update()``.
+        """
+        return [det for det, age in self._track_buffer.values() if age == 0]
+
     def get_target_position(self) -> list[float] | None:
         """Return the buffered noisy position of the locked target [dx, dy, dz].
 
@@ -334,3 +347,24 @@ class SearchRadar:
         # Clear any stale buffer entry for the newly locked target so that
         # get_target_position() returns None until the next update() detects it.
         self._track_buffer.pop(track_id, None)
+
+    def set_beam_pose(self, azimuth: float, origin: list[float] | None = None) -> None:
+        """Override the beam azimuth, and optionally the phase-centre origin.
+
+        The controller calls this each step to align the software detection gate
+        with the rendered FOV node, making the Webots proto visual the source of
+        truth for beam direction (this avoids re-deriving sign/frame conventions
+        from the spin-motor joint). It is the membrane-safe replacement for the
+        controller writing ``_beam_azimuth`` / ``_radar_position`` directly.
+
+        Args:
+            azimuth: New beam azimuth in radians (SearchRadar convention:
+                     x = sin(az), y = cos(az)).
+            origin:  New world-frame phase-centre ``[x, y, z]``. ``None`` leaves
+                     the constructed ``radar_position`` unchanged — used when only
+                     a joint-angle sensor drives the azimuth and the phase centre
+                     is fixed.
+        """
+        self._beam_azimuth = azimuth
+        if origin is not None:
+            self._radar_position = list(origin)
