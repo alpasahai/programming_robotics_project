@@ -42,6 +42,10 @@ PROTO AtlasTurret [
           children [
             HingeJoint {
               jointParameters HingeJointParameters {
+                # Start pointing straight up (+pi/2), matching FSMConfig.idle_tilt,
+                # so the turret rests skyward from the very first frame instead of
+                # slewing up from horizontal at startup.
+                position 1.5708
                 # +X so tilt elevates the +Y boresight (about the horizontal axis
                 # perpendicular to it). The previous +Y axis was parallel to the
                 # beam, so tilting spun the laser about itself and the beam never
