@@ -34,6 +34,7 @@ from controller import Supervisor
 from atlas_logging import configure
 from scene import DEF_PROJECTILE, DEF_TURRET_BASE
 from search_radar import SearchRadar
+from sweep_control import next_bounded_sweep_target
 
 # Search Radar sensor and visualisation parameters. Keep these constants as the
 # single source for both the SearchRadar model and the visible debug beam.
@@ -43,6 +44,9 @@ SEARCH_RADAR_BEAM_WIDTH_RAD = 0.35
 SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.32
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20
 SEARCH_RADAR_NOISE_STD_M = 0.2
+SEARCH_RADAR_MIN_ANGLE_RAD = 0.0
+SEARCH_RADAR_MAX_ANGLE_RAD = math.pi
+SEARCH_RADAR_SWEEP_TARGET_TOLERANCE_RAD = 0.02
 # The radar's mounting geometry (pole / endpoint / beam height) lives solely in
 # SearchRadar.proto. The controller derives the phase centre by reading the
 # rendered SR_FOV_BEAM node instead of duplicating those z offsets here — change
@@ -78,21 +82,35 @@ if motor is None:
     while robot.step(timestep) != -1:
         pass
 
-motor.setPosition(float("inf"))
-motor_velocity = SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP / (timestep / 1000.0)
-motor.setVelocity(motor_velocity)
-log.info(
-    "SEARCH_RADAR_MOTOR spinning at %.3f rad/s; SearchRadar gates on the "
-    "measured joint angle (nominal scan_rate %.3f rad/step)",
-    motor_velocity,
-    SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
-)
-
 angle_sensor = robot.getDevice("SEARCH_RADAR_ANGLE")
 if angle_sensor is None:
     log.warning("SEARCH_RADAR_ANGLE not found - visual beam angle will not be logged")
 else:
     angle_sensor.enable(timestep)
+
+motor_velocity = SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP / (timestep / 1000.0)
+motor.setVelocity(motor_velocity)
+
+if angle_sensor is not None:
+    scan_target = SEARCH_RADAR_MAX_ANGLE_RAD
+    motor.setPosition(scan_target)
+    log.info(
+        "SEARCH_RADAR_MOTOR sweeping between %.3f and %.3f rad at %.3f rad/s; "
+        "SearchRadar gates on the measured joint angle (nominal scan_rate %.3f rad/step)",
+        SEARCH_RADAR_MIN_ANGLE_RAD,
+        SEARCH_RADAR_MAX_ANGLE_RAD,
+        motor_velocity,
+        SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
+    )
+else:
+    scan_target = None
+    motor.setPosition(float("inf"))
+    log.info(
+        "SEARCH_RADAR_MOTOR spinning at %.3f rad/s without angle feedback "
+        "(nominal scan_rate %.3f rad/step)",
+        motor_velocity,
+        SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
+    )
 
 emitter = robot.getDevice("SR_CUE_EMITTER")
 if emitter is None:
@@ -240,6 +258,18 @@ step_count = 0
 
 while robot.step(timestep) != -1:
     step_count += 1
+
+    if angle_sensor is not None and scan_target is not None:
+        next_scan_target = next_bounded_sweep_target(
+            joint_angle=angle_sensor.getValue(),
+            current_target=scan_target,
+            min_angle=SEARCH_RADAR_MIN_ANGLE_RAD,
+            max_angle=SEARCH_RADAR_MAX_ANGLE_RAD,
+            tolerance=SEARCH_RADAR_SWEEP_TARGET_TOLERANCE_RAD,
+        )
+        if next_scan_target != scan_target:
+            scan_target = next_scan_target
+            motor.setPosition(scan_target)
 
     # 1. Align the radar model to the actual rendered FOV node, then update.
     #    This makes the proto visual the source of truth for beam direction and
