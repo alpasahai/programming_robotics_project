@@ -20,6 +20,12 @@ PROTO Attacker [
     controller "attacker_controller"
     supervisor IS supervisor
     children [
+      Emitter {
+        name "ATTACKER_EMITTER"
+        type "radio"
+        channel 2
+        range -1
+      }
     ]
   }
 }
