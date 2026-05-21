@@ -278,6 +278,19 @@ class SearchRadar:
         """
         return [det for det, _age in self._track_buffer.values()]
 
+    def get_fresh_detections(self) -> list[Detection]:
+        """Return Detection objects for tracks detected on the most recent update().
+
+        A track is *fresh* when its buffer age is 0 — the beam was directly on it
+        during the last ``update()``. Tracks held between beam passes (age > 0, kept
+        alive by ``track_timeout``) are excluded. This is the membrane-safe
+        replacement for the controller reaching into ``_track_buffer`` to test age.
+
+        Returns a fresh list each call; ``Detection`` is immutable so elements are
+        safe to share. Returns an empty list before the first ``update()``.
+        """
+        return [det for det, age in self._track_buffer.values() if age == 0]
+
     def get_target_position(self) -> list[float] | None:
         """Return the buffered noisy position of the locked target [dx, dy, dz].
 
