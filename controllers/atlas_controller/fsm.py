@@ -64,6 +64,15 @@ class FSMConfig:
     # prediction is trustworthy enough to fire. See _do_track_predict.
     track_error_threshold: float = 0.3  # metres
     converge_frames: int = 3  # consecutive sub-threshold steps before firing
+    # Estimated turret slew rate (rad/s). The turret has no motor PositionSensor,
+    # so the FSM models the physical aim: each step it advances its reported aim
+    # (commanded_aim) toward the commanded target by at most slew_rate * dt. The
+    # FCR gates its lock on commanded_aim, so AIM only advances to TRACK_PREDICT
+    # once the turret has actually had time to slew onto the cued bearing —
+    # rather than the instant the angle is commanded. MUST match the PAN/TILT
+    # motor maxVelocity in AtlasTurret.proto for the estimate to track the real
+    # motor.
+    slew_rate: float = 10.0  # rad/s
     # lookahead_steps tuned for the ATLAS projectile (~1.6 m apex, ~1.2 s flight):
     # at a 32 ms timestep, 10 steps = 0.32 s, keeping the predicted intercept
     # airborne. A longer lookahead overshoots the projectile's landing and the
@@ -154,9 +163,15 @@ class AtlasFSM:
         self._pred_history = deque(maxlen=self.config.lookahead_steps + 1)
         self._converge_count = 0  # consecutive sub-threshold prediction-error steps
 
-        # Aim bookkeeping
-        self._commanded_pan = 0.0  # last pan angle sent to the pan motor (radians)
-        self._commanded_tilt = 0.0  # last tilt angle sent to the tilt motor (radians)
+        # Aim bookkeeping. These hold the FSM's *estimate* of the turret's
+        # physical aim (radians), not the absolute target last commanded to the
+        # motors. _command_angles advances them toward each commanded target at
+        # config.slew_rate, modelling the motor's slew in the absence of a
+        # PositionSensor. commanded_aim exposes them so the FCR gates its lock on
+        # the estimated physical aim. The absolute target (with the pan seam
+        # unwrapped) is tracked separately by _last_pan_cmd.
+        self._commanded_pan = 0.0
+        self._commanded_tilt = 0.0
 
     def step(self) -> None:
         """Advance FSM by one timestep.
@@ -179,15 +194,19 @@ class AtlasFSM:
 
     @property
     def commanded_aim(self) -> tuple[float, float]:
-        """Return the turret aim last commanded to the motors as ``(pan, tilt)``.
+        """Return the FSM's estimate of the turret's physical aim as ``(pan, tilt)``.
 
         Both angles are in radians, Z-up ENU (pan = azimuth, tilt = elevation).
-        The values are whatever ``_aim_at`` (or the IDLE hold) last sent to the
-        motors; before any command is issued they are ``(0.0, 0.0)``.
+        This is NOT the absolute target last sent to the motors — it is an
+        estimate that slews toward each commanded target at ``config.slew_rate``,
+        modelling the motor's real motion since the turret has no PositionSensor.
+        Before any command is issued it is ``(0.0, 0.0)``.
 
         The controller reads this each sense phase to feed the FCR its
-        boresight: ``fcr.update(*fsm.commanded_aim)``. A one-step lag is
-        acceptable — the motor is mid-slew anyway.
+        boresight: ``fcr.update(*fsm.commanded_aim)``. Because it tracks the
+        physical slew rather than the instantaneous target, the FCR only locks
+        once the turret has actually swung onto the target — which is what keeps
+        AIM from advancing to TRACK_PREDICT prematurely.
         """
         return (self._commanded_pan, self._commanded_tilt)
 
@@ -433,27 +452,49 @@ class AtlasFSM:
             (pan_angle, tilt_angle) actually commanded, in radians.
         """
         raw_pan = pan
-        pan = self._unwrap_pan(raw_pan, self._last_pan_cmd)
-        self._last_pan_cmd = pan
+        target_pan = self._unwrap_pan(raw_pan, self._last_pan_cmd)
+        self._last_pan_cmd = target_pan
 
-        self.hardware.pan_motor.setPosition(pan)
+        # Tell the motors where to end up. Webots slews them there at their
+        # maxVelocity over several steps — we command the absolute target, not a
+        # rate-limited step.
+        self.hardware.pan_motor.setPosition(target_pan)
         self.hardware.tilt_motor.setPosition(tilt)
-        # Record what was actually commanded so commanded_aim can feed the FCR
-        # its boresight.
-        self._commanded_pan = pan
-        self._commanded_tilt = tilt
+
+        # Model the physical aim. With no PositionSensor we cannot read the real
+        # motor angle, so advance our estimate toward the commanded target at the
+        # turret's slew rate. commanded_aim exposes this estimate; the FCR gates
+        # its lock on it, so the FSM only believes it is on-target once the turret
+        # has actually had time to slew there. slew_rate must match the motor
+        # maxVelocity for the estimate to stay in step with the real motor.
+        max_step = self.config.slew_rate * (self.hardware.timestep_ms / 1000.0)
+        self._commanded_pan = self._step_toward(self._commanded_pan, target_pan, max_step)
+        self._commanded_tilt = self._step_toward(self._commanded_tilt, tilt, max_step)
         _motor_log.debug(
             "[%s aim] target_rel=%s -> "
             "pan_motor.setPosition(%.4f rad)  tilt_motor.setPosition(%.4f rad)  "
-            "(raw_pan=%.4f, unwrapped by %+.4f)",
+            "(raw_pan=%.4f)  est_aim=(%.4f, %.4f)",
             self.state,
             rel_position,
-            pan,
+            target_pan,
             tilt,
             raw_pan,
-            pan - raw_pan,
+            self._commanded_pan,
+            self._commanded_tilt,
         )
-        return pan, tilt
+        return target_pan, tilt
+
+    @staticmethod
+    def _step_toward(current: float, target: float, max_step: float) -> float:
+        """Return ``current`` moved toward ``target`` by at most ``max_step``.
+
+        Snaps to ``target`` once it is within reach. Used to advance the
+        estimated physical aim at the turret's slew rate (see _command_angles).
+        """
+        delta = target - current
+        if abs(delta) <= max_step:
+            return target
+        return current + math.copysign(max_step, delta)
 
     @staticmethod
     def _unwrap_pan(new_angle: float, prev_angle: float) -> float:

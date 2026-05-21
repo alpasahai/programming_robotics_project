@@ -596,11 +596,33 @@ def test_commanded_aim_initial_value_is_zero():
     assert fsm.commanded_aim == (0.0, 0.0)
 
 
-def test_commanded_aim_reports_last_commanded_angles():
-    """commanded_aim must report the (pan, tilt) last sent to the motors."""
-    config = FSMConfig(idle_pan=0.4, idle_tilt=0.1)
-    fsm, _, _ = _build_fsm(config=config)
+def test_commanded_aim_tracks_physical_slew_not_instant_target():
+    """commanded_aim must lag the commanded target, advancing at slew_rate.
+
+    With slew_rate=10 rad/s and a 32 ms timestep, each step moves the estimate
+    by at most 0.32 rad. The motor is still told the full target, but the
+    estimate (which the FCR sees) only converges over several steps — this is
+    what stops AIM from locking the instant the angle is commanded.
+    """
+    config = FSMConfig(idle_pan=1.0, idle_tilt=0.0, slew_rate=10.0)
+    fsm, pan, _ = _build_fsm(config=config)  # timestep_ms=32 → max 0.32 rad/step
+
     fsm.step()
+    # Motor commanded the full target immediately...
+    assert pan.position == pytest.approx(1.0)
+    # ...but the estimated aim has only moved one slew step.
+    assert fsm.commanded_aim[0] == pytest.approx(0.32)
+
+    fsm.step()
+    assert fsm.commanded_aim[0] == pytest.approx(0.64)
+
+
+def test_commanded_aim_reaches_target_after_enough_steps():
+    """commanded_aim must converge exactly on the target once the slew completes."""
+    config = FSMConfig(idle_pan=0.4, idle_tilt=0.1, slew_rate=10.0)
+    fsm, _, _ = _build_fsm(config=config)
+    for _ in range(5):
+        fsm.step()
     assert fsm.commanded_aim == pytest.approx((0.4, 0.1))
 
 
