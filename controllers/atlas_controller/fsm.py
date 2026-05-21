@@ -53,10 +53,12 @@ class FSMConfig:
     ground_threshold: float = 0.1  # metres world-Z — telemetry readout only; not used by FSM logic
     acquire_frames: int = 3  # consecutive cues to leave IDLE
     # IDLE beam direction (radians, Z-up ENU). The turret holds this fixed aim
-    # while waiting for a Search Radar cue — no pan sweep. Defaults to straight
-    # ahead and level.
+    # while waiting for a Search Radar cue — no pan sweep. Rests pointing
+    # straight up (tilt = +pi/2 = the tilt limit), a neutral skyward stance from
+    # which the turret slews down onto the cue when one arrives. pan is
+    # irrelevant while pointing straight up.
     idle_pan: float = 0.0
-    idle_tilt: float = 0.0
+    idle_tilt: float = math.pi / 2
     # TRACK_PREDICT → ENGAGING gate. Each step compares the intercept predicted
     # lookahead_steps ago FOR the current step against the filter's current
     # position estimate. When that prediction error stays below

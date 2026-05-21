@@ -212,21 +212,6 @@ while robot.step(timestep) != -1:
         tilt_actual = 0.0
     fcr.update(pan_actual, tilt_actual)
 
-    # Aim trace: real (measured) vs commanded angle. Reveals how far the motor
-    # is lagging the FSM's command — set AtlasController to DEBUG to see it.
-    cmd_pan, cmd_tilt = fsm.commanded_aim
-    log.debug(
-        "[AIM] state=%s  actual=(%.3f, %.3f)  commanded=(%.3f, %.3f)  "
-        "pan_err=%+.3f tilt_err=%+.3f rad",
-        fsm.state,
-        pan_actual,
-        tilt_actual,
-        cmd_pan,
-        cmd_tilt,
-        cmd_pan - pan_actual,
-        cmd_tilt - tilt_actual,
-    )
-
     # 2. Predict [sim-clock cadence] — propagate Kalman state forward one
     #    timestep. Runs every tick so the estimate stays warm even in states
     #    that don't read it (ADR-0003 continuous fusion).
