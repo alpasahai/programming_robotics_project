@@ -52,6 +52,17 @@ class SearchRadarLink:
             self._last_cue = [x, y, z]
             self._receiver.nextPacket()
 
+    def clear(self) -> None:
+        """Discard the stored cue so ``get_cue()`` returns ``None`` again.
+
+        Called by the FSM on RESET so a fresh engagement cycle does not act on
+        a cue left over from the previous one. The stored cue persists across
+        steps (no expiry timer), so without this an old cue would immediately
+        re-trigger IDLE → AIM even though no new cue has arrived. The next
+        ``update()`` re-populates it only if a genuinely new packet is waiting.
+        """
+        self._last_cue = None
+
     def get_cue(self) -> list[float] | None:
         """Return the most recently received world-frame target position.
 

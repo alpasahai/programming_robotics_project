@@ -347,6 +347,10 @@ class AtlasFSM:
 
         What this handler clears explicitly (beyond _transition(IDLE)):
           - track_filter.reset()  → wipes the Kalman estimate (per the redesign)
+          - cue_link.clear()      → discards the previous engagement's Search Radar
+                                    cue. The cue link has no expiry, so without this
+                                    the stale cue would immediately re-trigger
+                                    IDLE → AIM even though no fresh cue has arrived.
           - _target               → None
           - _intercept            → None
           - _aim_entry_done       → False (RESET→IDLE skips AIM, so the entry
@@ -357,6 +361,7 @@ class AtlasFSM:
         _transition(IDLE) covers: _detection_count.
         """
         self.sensors.track_filter.reset()
+        self.sensors.cue_link.clear()
         self._target = None
         self._intercept = None
         self._aim_entry_done = False

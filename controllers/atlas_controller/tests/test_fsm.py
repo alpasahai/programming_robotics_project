@@ -542,6 +542,50 @@ def test_reset_clears_aim_entry_guard():
     assert fsm._aim_entry_done is False
 
 
+def test_reset_clears_search_radar_cue():
+    """RESET must clear the stored Search Radar cue.
+
+    The cue link has no expiry, so a cue from the previous engagement would
+    otherwise still be returned by get_cue() and immediately re-trigger
+    IDLE → AIM without any fresh cue arriving.
+    """
+    cue_link = StubCueLink(cue=[1.0, 2.0, 0.5])
+    track_filter = StubTrackFilter(position=[1.0, 2.0, 1.0], velocity=[0.0, 0.0, 0.0])
+    fsm, _, _ = _build_fsm(
+        cue_link=cue_link,
+        track_filter=track_filter,
+        config=FSMConfig(acquire_frames=1),
+    )
+    fsm.state = AtlasFSM.RESET
+    fsm.step()  # RESET → IDLE, must wipe the stale cue
+    assert cue_link.get_cue() is None
+    assert fsm.state == AtlasFSM.IDLE
+
+
+def test_idle_after_reset_waits_for_fresh_cue():
+    """After RESET → IDLE, a stale cue must not re-trigger AIM; only fresh cues count.
+
+    Reproduces the reported bug: with the cue persisting and acquire_frames=1,
+    the FSM jumped IDLE → AIM on the very next step despite no new cue.
+    """
+    cue_link = StubCueLink(cue=[1.0, 2.0, 0.5])
+    track_filter = StubTrackFilter(position=[1.0, 2.0, 1.0], velocity=[0.0, 0.0, 0.0])
+    fsm, _, _ = _build_fsm(
+        cue_link=cue_link,
+        track_filter=track_filter,
+        config=FSMConfig(acquire_frames=1),
+    )
+    fsm.state = AtlasFSM.RESET
+    fsm.step()  # RESET → IDLE (clears the stale cue)
+    assert fsm.state == AtlasFSM.IDLE
+    fsm.step()  # IDLE step: cue is gone → must stay in IDLE
+    assert fsm.state == AtlasFSM.IDLE
+    # A genuinely fresh cue then drives the next acquisition.
+    cue_link.cue = [3.0, 4.0, 1.0]
+    fsm.step()
+    assert fsm.state == AtlasFSM.AIM
+
+
 # ---------------------------------------------------------------------------
 # commanded_aim property
 # ---------------------------------------------------------------------------
