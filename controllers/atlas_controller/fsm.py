@@ -24,6 +24,7 @@ class SensorSuite:
     fcr: object  # FireControlRadar
     track_filter: object  # TrackFilter
     ballistic_predictor: object  # BallisticTrajectoryPredictor
+    ground_hit_link: object  # AttackerGroundHitLink — attacker ground-hit pulse
 
 
 @dataclass
@@ -48,7 +49,7 @@ class FSMConfig:
     """
 
     max_range: float = 10.0  # metres — target beyond this → RESET
-    ground_threshold: float = 0.1  # metres world-Z — below this → landed
+    ground_threshold: float = 0.1  # metres world-Z — telemetry readout only; not used by FSM logic
     acquire_frames: int = 3  # consecutive detections to leave SEARCH
     min_track_frames: int = 15  # TrackFilter frames before PREDICT
     # lookahead_steps tuned for the ATLAS projectile (~1.6 m apex, ~1.2 s flight):
@@ -83,10 +84,10 @@ class AtlasFSM:
     TRACK    : TrackFilter fusing both sensors. Turret follows filtered position.
                Waits for MIN_TRACK_FRAMES before attempting PREDICT.
     PREDICT  : BallisticTrajectoryPredictor computes intercept point. Validates
-               intercept is above ground and in range before AIMING.
+               the intercept is within max_range before AIMING.
     AIMING   : Turret slews to intercept point. Waits for aim error < threshold.
-    ENGAGING : Laser active. Turret holds aim. Transitions to RESET when target
-               goes out of range or hits ground.
+    ENGAGING : Laser active. Turret holds aim. Transitions to RESET when the
+               attacker's ground-hit cue fires or the target leaves max_range.
     RESET    : Clears all state. Returns to SEARCH.
 
     Sensor fusion
@@ -302,10 +303,11 @@ class AtlasFSM:
         """Execute one timestep of PREDICT state logic.
 
         Computes a ballistic intercept point for config.lookahead_steps ahead
-        and validates it. If the intercept is within max_range AND above
-        ground_threshold, stores it on self._intercept and transitions to AIMING.
-        If the intercept is invalid (out of range or below ground), transitions
-        back to TRACK to continue refining the estimate before retrying.
+        and validates it. If the intercept is within max_range, stores it on
+        self._intercept and transitions to AIMING. If it is out of range,
+        transitions back to TRACK to continue refining the estimate before
+        retrying. There is no below-ground guard: ground reasoning lives only
+        in the attacker's emitted cue (see the 2026-05-21 spec).
 
         The intercept is stored as relative [dx, dy, dz] (metres, Z-up ENU)
         from the turret origin, ready for AIMING to consume.
@@ -313,7 +315,7 @@ class AtlasFSM:
         intercept = self.sensors.ballistic_predictor.get_intercept(
             self.config.lookahead_steps
         )
-        if self._target_in_range(intercept):
+        if self._target_within_range(intercept):
             self._intercept = intercept
             self._transition(self.AIMING)
         else:
@@ -373,10 +375,11 @@ class AtlasFSM:
 
         Activates the laser (self.laser_active = True) and holds aim on the stored
         intercept point by re-commanding both motors each step. Reads the current
-        target position from sensors.track_filter.get_position() and checks whether
-        the target is still within engagement range via _target_in_range(). When the
-        target goes out of range (beyond max_range or at/below ground_threshold),
-        transitions to RESET.
+        target position from sensors.track_filter.get_position() and checks the
+        range envelope via _target_within_range(). Transitions to RESET when the
+        attacker's ground-hit cue fires this step (sensors.ground_hit_link) or
+        the target goes beyond max_range. The ground hit is never inferred from
+        the track Z — the emitted cue is the only ground-hit signal.
 
         self.laser_active is readable by the controller (Task 9) to drive the
         actual laser hardware.
@@ -388,9 +391,13 @@ class AtlasFSM:
         # Hold aim on the fixed intercept
         self._aim_at(self._intercept)
 
-        # Monitor live target position; exit when target leaves the engagement envelope
+        # Exit on the authoritative ground-hit cue from the attacker, or when the
+        # target leaves the range envelope. Ground hits are NEVER inferred from
+        # the track Z here — the emitted cue is the only ground-hit signal.
         target_position = self.sensors.track_filter.get_position()
-        if not self._target_in_range(target_position):
+        if self.sensors.ground_hit_link.hit_this_step() or not self._target_within_range(
+            target_position
+        ):
             self._transition(self.RESET)
 
     def _do_reset(self) -> None:
@@ -532,23 +539,24 @@ class AtlasFSM:
         tilt = math.atan2(dz, math.sqrt(dx * dx + dy * dy))
         return pan, tilt
 
-    def _target_in_range(self, rel_position: list[float]) -> bool:
-        """Return True if the target is within range and above the ground threshold.
+    def _target_within_range(self, rel_position: list[float]) -> bool:
+        """Return True if the target/intercept is within engagement range.
 
-        A target is considered valid when:
-        - Its Euclidean distance from the turret is ≤ config.max_range (metres).
-        - Its world-Z component (rel_position[2]) is > config.ground_threshold
-          (metres), meaning it has not hit the ground.
+        In range means the Euclidean distance from the turret is
+        ≤ config.max_range (metres). Ground reasoning deliberately lives
+        nowhere in the FSM: a ground hit is signalled only by the attacker's
+        emitted cue (sensors.ground_hit_link), never inferred from Z. See the
+        2026-05-21 attacker-ground-hit-cue spec.
 
         Args:
             rel_position: Relative [dx, dy, dz] from turret origin (metres).
 
         Returns:
-            True if within max_range AND above ground_threshold, False otherwise.
+            True if within max_range, False otherwise.
         """
         dx, dy, dz = rel_position
         distance = math.sqrt(dx * dx + dy * dy + dz * dz)
-        return distance <= self.config.max_range and dz > self.config.ground_threshold
+        return distance <= self.config.max_range
 
     def _transition(self, new_state: str) -> None:
         """Log and execute a state transition, resetting per-state bookkeeping.

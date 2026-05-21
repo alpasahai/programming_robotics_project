@@ -7,11 +7,29 @@ BallisticTrajectoryPredictor, AtlasFSM). The incoming projectile's
 launch/relaunch lifecycle is owned by the separate attacker_controller; this
 controller only reads the projectile's position as ground-truth telemetry.
 
+Two clocks, one loop
+--------------------
+This loop sequences two different notions of "state", and keeping them
+distinct is the key to reading it:
+
+  * Sensor sampling state is driven by the *simulation clock*. Every sensor
+    is sampled once per physics tick, unconditionally, so the world model
+    stays current no matter what the turret is doing. That cadence lives
+    here, in the loop (steps 1-3 below). These calls carry no decisions.
+  * FSM state is driven by *events* (locks, cue counts, ranges). It only
+    advances when conditions are met, and all of that — every if/then — lives
+    inside AtlasFSM (step 4). The loop never inspects sensor readings to make
+    a control decision; it just keeps the senses ticking and lets the FSM
+    read an always-fresh world model.
+
+So the brain is the FSM. This loop is pure cadence: it guarantees the senses
+fire on the clock, in a fixed order, exactly once per tick.
+
 Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
-  1. Sense   — cue_link.update(), fcr.update(turret_aim)
-  2. Predict — track_filter.predict()
-  3. Fuse    — track_filter.update_fcr() when FCR is locked
-  4. Decide  — fsm.step()
+  1. Sense   — cue_link.update(), fcr.update(turret_aim)   [sim-clock cadence]
+  2. Predict — track_filter.predict()                      [sim-clock cadence]
+  3. Fuse    — track_filter.update_fcr() when FCR is locked [sim-clock cadence]
+  4. Decide  — fsm.step()                                  [event-driven state]
   5. Report  — telemetry.report() (development instrument; no effect on control)
 """
 
@@ -20,6 +38,7 @@ from controller import Supervisor
 from atlas_logging import configure
 from fire_control_radar import FireControlRadar
 from search_radar_link import SearchRadarLink
+from attacker_ground_hit_link import AttackerGroundHitLink
 from track_filter import TrackFilter
 from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
 from fsm import AtlasFSM, SensorSuite, TurretHardware
@@ -73,6 +92,11 @@ tilt = robot.getDevice("TILT_MOTOR")
 receiver = robot.getDevice("FCR_CUE_RECEIVER")
 receiver.enable(timestep)
 
+# Receiver for the attacker's ground-hit pulse (channel 2). Enabled before the
+# link is constructed, like the Search Radar receiver above.
+ground_hit_receiver = robot.getDevice("ATTACKER_GROUND_HIT_RECEIVER")
+ground_hit_receiver.enable(timestep)
+
 # --- Scene nodes ---
 projectile = robot.getFromDef(DEF_PROJECTILE)
 if projectile is None:
@@ -94,6 +118,7 @@ fcr = FireControlRadar(
     noise_std=FCR_NOISE_STD_M,
 )
 cue_link = SearchRadarLink(receiver)
+ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
 
 # --- State estimator ---
 # R_search is retained as a constructor parameter (TrackFilter still accepts it)
@@ -114,6 +139,7 @@ sensors = SensorSuite(
     fcr=fcr,
     track_filter=track_filter,
     ballistic_predictor=ballistic_predictor,
+    ground_hit_link=ground_hit_link,
 )
 hardware = TurretHardware(
     pan_motor=pan,
@@ -142,28 +168,46 @@ step_count = 0  # simulation steps elapsed — shown in telemetry
 
 # ---------------------------------------------------------------------------
 # Main loop
+#
+# Steps 1-3 run on the simulation clock: they sample the world once per physics
+# tick, unconditionally, keeping the world model current regardless of FSM
+# state. They contain no control decisions. Step 4 is event-driven — the FSM
+# reads that fresh world model and advances its own state only when conditions
+# are met. See the module docstring ("Two clocks, one loop").
 # ---------------------------------------------------------------------------
 
 while robot.step(timestep) != -1:
     step_count += 1
 
-    # 1. Sense — drain the cue link and update the FCR with the turret's
-    #    current aim. The FCR gates detection against the boresight, so it
-    #    must be fed the aim angles the FSM last commanded.
+    # 1. Sense [sim-clock cadence] — drain the cue link and update the FCR with
+    #    the turret's current aim. The FCR gates detection against the boresight,
+    #    so it must be fed the aim angles the FSM last commanded.
     cue_link.update()
+    ground_hit_link.update()
+    if ground_hit_link.hit_this_step():
+        log.info(
+            "[ATLAS] ground-hit cue received: hit #%d at t=%.2fs",
+            ground_hit_link.count,
+            robot.getTime(),
+        )
     fcr.update(*fsm.commanded_aim)
 
-    # 2. Predict — propagate Kalman state forward one timestep
+    # 2. Predict [sim-clock cadence] — propagate Kalman state forward one
+    #    timestep. Runs every tick so the estimate stays warm even in states
+    #    that don't read it (ADR-0003 continuous fusion).
     track_filter.predict()
 
-    # 3. Fuse — update filter with FCR measurement when locked.
-    #    The Search Radar is a separate process; it cues the FSM via the
+    # 3. Fuse [sim-clock cadence] — update filter with FCR measurement when
+    #    locked. The Search Radar is a separate process; it cues the FSM via the
     #    radio link but no longer feeds the TrackFilter directly.
+    #    NOTE: the `is not None` guard is the one control decision left in the
+    #    Sense layer ("when to fuse") — the FSM already knows lock state via
+    #    fcr.is_locked(). A candidate to push into the FSM / TrackFilter later.
     fcr_pos = fcr.get_target_position()
     if fcr_pos is not None:
         track_filter.update_fcr(fcr_pos)
 
-    # 4. Decide — advance FSM one step
+    # 4. Decide [event-driven state] — advance FSM one step
     fsm.step()
 
     # 5. Report — per-step development telemetry (no effect on control)
