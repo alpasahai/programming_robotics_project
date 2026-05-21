@@ -186,14 +186,20 @@ def test_idle_ground_hit_transitions_to_reset():
 # AIM — entry reset, motor aiming, AIM→TRACK_PREDICT transition
 # ---------------------------------------------------------------------------
 
-def _build_fsm_in_aim(cue=None, fcr=None, track_filter=None, ground_hit_link=None):
+def _build_fsm_in_aim(
+    cue=None, fcr=None, track_filter=None, ground_hit_link=None, bullet_hit_link=None
+):
     """Build an AtlasFSM placed directly in AIM with the given target cue."""
     if cue is None:
         cue = [1.0, 2.0, 0.5]
     if track_filter is None:
         track_filter = CapturingTrackFilter(position=[1.0, 1.0, 1.0], velocity=[0.0, 0.0, 0.0])
     fsm, pan, tilt = _build_fsm(
-        cue=cue, fcr=fcr, track_filter=track_filter, ground_hit_link=ground_hit_link
+        cue=cue,
+        fcr=fcr,
+        track_filter=track_filter,
+        ground_hit_link=ground_hit_link,
+        bullet_hit_link=bullet_hit_link,
     )
     fsm.state = AtlasFSM.AIM
     fsm._target = cue
@@ -430,7 +436,12 @@ def test_track_predict_ground_hit_transitions_to_reset():
 # ---------------------------------------------------------------------------
 
 def _build_fsm_in_engaging(
-    *, intercept=None, track_position=None, max_range=10.0, ground_hit=False
+    *,
+    intercept=None,
+    track_position=None,
+    max_range=10.0,
+    ground_hit=False,
+    bullet_hit_link=None,
 ):
     """Build an AtlasFSM placed directly in ENGAGING with a stored intercept."""
     if intercept is None:
@@ -443,6 +454,7 @@ def _build_fsm_in_engaging(
     fsm, pan, tilt = _build_fsm(
         track_filter=track_filter,
         ground_hit_link=StubGroundHitLink(hit=ground_hit),
+        bullet_hit_link=bullet_hit_link,
         config=config,
     )
     fsm.state = AtlasFSM.ENGAGING
@@ -782,6 +794,20 @@ def test_re_entering_engaging_emits_a_fresh_fire_command():
 # ---------------------------------------------------------------------------
 # Bullet-hit cue → RESET (projectile destroyed)
 # ---------------------------------------------------------------------------
+
+def test_bullet_hit_in_idle_transitions_to_reset():
+    """A bullet-hit cue during IDLE must send the FSM to RESET."""
+    fsm, _, _ = _build_fsm(bullet_hit_link=StubBulletHitLink(hit=True))
+    fsm.step()
+    assert fsm.state == AtlasFSM.RESET
+
+
+def test_bullet_hit_in_aim_transitions_to_reset():
+    """A bullet-hit cue during AIM must send the FSM to RESET."""
+    fsm, _, _, _ = _build_fsm_in_aim(bullet_hit_link=StubBulletHitLink(hit=True))
+    fsm.step()
+    assert fsm.state == AtlasFSM.RESET
+
 
 def test_bullet_hit_in_engaging_transitions_to_reset():
     """A bullet-hit pulse while ENGAGING ends the engagement → RESET."""
