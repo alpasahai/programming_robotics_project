@@ -83,6 +83,9 @@ class Bullet:
         same step (see module docstring). The body was reset on the previous
         recycle().
         """
+        # Defensive guard: a zero intercept would teleport the bullet onto the
+        # turret with zero velocity. Callers must never pass one — the FSM
+        # intercept is always non-zero (see the predictor/range checks).
         mag = math.sqrt(sum(c * c for c in intercept_rel)) or 1.0
         direction = [c / mag for c in intercept_rel]
 

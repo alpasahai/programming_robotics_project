@@ -75,6 +75,7 @@ def test_fire_offsets_from_turret_world_position():
     bullet.fire([0.0, 0.0, 3.0])  # straight up
 
     assert node.translation_field.value == [5.0, 0.0, 3.0]
+    assert node.set_velocity_calls[-1] == [0.0, 0.0, 10.0, 0.0, 0.0, 0.0]
 
 
 def test_fire_does_not_reset_physics_in_same_step_as_launch():
