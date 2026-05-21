@@ -26,7 +26,7 @@ The target the turret defends against, defined by `Projectile.proto` (DEF `PROJE
 
 ## Ground Hit
 
-The event where the incoming `Projectile` reaches the floor (world-Z below a threshold while descending). The `Attacker` registers each one — incrementing a count and firing a callback — then despawns and respawns the ball. Registration is the seam where scoring / the future referee will hook in. Currently it only logs and counts.
+The event where the incoming `Projectile` touches the floor. Detected from the ball's real physics **contact points** (`getContactPoints`, world frame), not a height heuristic: a contact near the floor (`z <= floor_contact_z_m`) is a ground hit, a contact up in the air is a `Bullet` hit. Webots' contact `node_id` identifies the ball itself, not the other body, so contact **height** is the discriminator between the two outcomes. A ground contact only counts once the ball has cleared the floor since launch (an "airborne latch"), so the floor contact present at spawn is not mistaken for a landing. The `Attacker` registers each hit — incrementing a count and firing a callback — then despawns and respawns the ball. Registration is the seam where scoring / the future referee will hook in. See ADR-0011.
 
 ## ATLAS (Autonomous Tracking and Laser Aiming System)
 

@@ -11,16 +11,23 @@ class StubField:
         self.value = list(value)
 
 
+class StubContact:
+    """Stand-in for a Webots ContactPoint (world-frame .point)."""
+
+    def __init__(self, point):
+        self.point = list(point)
+
+
 class StubProjectileNode:
     """Controllable stand-in for a Webots Solid node.
 
-    position/velocity are driven by the test (set ``.position`` / ``.velocity``
-    between ``step`` calls). Records calls so tests can assert on launch/reset.
+    Tests drive ``.contacts`` (a list of StubContact) between ``step`` calls to
+    simulate floor / mid-air contacts. Records calls so tests can assert on
+    launch/reset.
     """
 
-    def __init__(self, position=None, velocity=None):
-        self.position = list(position) if position else [0.0, 0.0, 5.0]
-        self.velocity = list(velocity) if velocity else [0.0, 0.0, 0.0]
+    def __init__(self):
+        self.contacts = []
         self.translation_field = StubField()
         self.set_velocity_calls = []
         self.reset_physics_calls = 0
@@ -29,11 +36,8 @@ class StubProjectileNode:
         assert name == "translation"
         return self.translation_field
 
-    def getPosition(self):
-        return list(self.position)
-
-    def getVelocity(self):
-        return list(self.velocity)
+    def getContactPoints(self, includeDescendants=False):
+        return self.contacts
 
     def setVelocity(self, velocity):
         self.set_velocity_calls.append(list(velocity))

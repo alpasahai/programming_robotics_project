@@ -9,18 +9,27 @@ The incoming `Projectile` is owned by a separate offense supervisor, the
 The projectile itself is a passive `Solid` with no controller of its own; the
 attacker drives it through the supervisor API.
 
-On a **ground hit** the attacker **recycles a single node** rather than deleting
-and re-importing one:
+On a **hit** the attacker **recycles a single node** rather than deleting and
+re-importing one:
 
-- **Register** — increment a ground-hit count and fire a callback (the seam for
-  future scoring / the referee).
+- **Detect** — query the ball's real contact points each step
+  (`getContactPoints`, world frame) and classify by world-Z: a contact near the
+  floor is a **ground hit**, a contact in the air is a **bullet hit**. Webots'
+  contact `node_id` identifies the ball itself, not the other body, so height is
+  the discriminator. An "airborne latch" requires the ball to clear the floor
+  once before a floor contact counts, so the launch-time floor contact is not a
+  false landing.
+- **Register** — increment the relevant hit count and fire a callback (the seam
+  for future scoring / the referee).
 - **Despawn** — zero the ball's velocity and teleport it far out of every
   sensor's range/FOV.
-- **Spawn** — after a respawn delay, teleport the ball back to the spawn point,
-  reset physics, and relaunch it.
+- **Spawn** — after a respawn delay, teleport the ball back to the spawn point
+  and relaunch it. resetPhysics() is done at despawn, never in the same timestep
+  as the launch setVelocity() (which Webots would otherwise zero).
 
 The spawn/despawn lifecycle is a two-state machine (`ACTIVE`, `DESPAWNED`) in the
-unit-tested `Projectile` class; `attacker_controller` is a thin loop.
+unit-tested `Projectile` class; `attacker_controller` is a thin loop. The bullet
+branch is dormant until the turret bullet exists.
 
 ## Context
 

@@ -33,7 +33,7 @@ if projectile_node is None:
 config = ProjectileConfig(
     spawn_position=[0, -3, 0.5],
     launch_velocity=[0, 4, 6, 0, 0, 0],
-    ground_hit_threshold_m=0.05,
+    floor_contact_z_m=0.1,
     respawn_delay_ms=2000,
 )
 
@@ -49,7 +49,23 @@ def on_ground_hit(count):
     )
 
 
-projectile = Projectile(projectile_node, config, on_ground_hit=on_ground_hit)
+def on_bullet_hit(count):
+    """Register a turret-bullet hit (dormant until the bullet exists)."""
+    log.info(
+        "[ATTACKER] bullet hit #%d registered at t=%.2fs — despawning ball; "
+        "spawning a new one in %.0fms",
+        count,
+        robot.getTime(),
+        config.respawn_delay_ms,
+    )
+
+
+projectile = Projectile(
+    projectile_node,
+    config,
+    on_ground_hit=on_ground_hit,
+    on_bullet_hit=on_bullet_hit,
+)
 
 log.info("ATTACKER CONTROLLER STARTED — spawning first projectile")
 projectile.spawn()
