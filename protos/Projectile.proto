@@ -1,4 +1,5 @@
 #VRML_SIM R2025a utf8
+# This is the attacker projectile.
 
 PROTO Projectile [
   field SFVec3f translation 0 -3 0.5
