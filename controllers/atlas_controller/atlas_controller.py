@@ -3,16 +3,15 @@
 Thin glue layer: constructs all components, wires them together, then runs
 the per-timestep loop. No logic lives here — all decision-making is inside
 the tested modules (FireControlRadar, SearchRadarLink, TrackFilter,
-BallisticTrajectoryPredictor, AtlasFSM). Projectile launch/reset is the only
-controller-level stateful behaviour (it is Webots-specific and untestable
-outside the runtime).
+BallisticTrajectoryPredictor, AtlasFSM). The incoming projectile's
+launch/relaunch lifecycle is owned by the separate attacker_controller; this
+controller only reads the projectile's position as ground-truth telemetry.
 
 Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   1. Sense   — cue_link.update(), fcr.update(turret_aim)
   2. Predict — track_filter.predict()
   3. Fuse    — track_filter.update_fcr() when FCR is locked
   4. Decide  — fsm.step()
-  5. Manage  — projectile reset/relaunch independent of FSM
 """
 
 import logging
@@ -25,14 +24,7 @@ from fire_control_radar import FireControlRadar
 from search_radar_link import SearchRadarLink
 from track_filter import TrackFilter
 from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
-from projectile_system import ProjectileSystem
 from fsm import AtlasFSM, SensorSuite, TurretHardware
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-GROUND_HIT_THRESHOLD_M = 0.05  # metres — projectile below this height counts as landed
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -130,17 +122,9 @@ hardware = TurretHardware(
 )
 fsm = AtlasFSM(sensors, hardware)  # uses default FSMConfig
 
-# --- Projectile system ---
-projectile_system = ProjectileSystem(projectile)
-
-# Projectile reset state (independent of FSM)
-projectile_launched = False
-waiting_for_launch = False
-reset_time = 10  # ms
-launch_delay = 2000  # ms — 2 second gap between shots
-
-projectile_system.launch_projectile()
-projectile_launched = True
+# The incoming projectile's launch/relaunch lifecycle is owned by the separate
+# attacker_controller. atlas_controller only reads its position (ground truth
+# for telemetry) via the DEF PROJECTILE handle obtained above.
 
 log.info("=" * 78)
 log.info("ATLAS telemetry legend")
@@ -274,25 +258,3 @@ while robot.step(timestep) != -1:
             "ABOVE-GROUND" if above_ground else "BELOW-GROUND",
         )
 
-    # 5. Manage projectile — detect ground hit and relaunch after delay.
-    #    This is independent of FSM state: the turret cycle and the projectile
-    #    trajectory are decoupled so the FSM can run through RESET→SEARCH while
-    #    waiting for the next shot.
-    projectile_position = projectile.getPosition()
-    projectile_velocity = projectile.getVelocity()
-    current_time = robot.getTime() * 1000  # convert to ms
-
-    if (
-        projectile_position[2] < GROUND_HIT_THRESHOLD_M
-        and projectile_velocity[2] < 0
-        and projectile_launched
-    ):
-        projectile_launched = False
-        waiting_for_launch = True
-        reset_time = current_time
-        projectile_system.reset_projectile()
-
-    if waiting_for_launch and (current_time - reset_time > launch_delay):
-        projectile_system.launch_projectile()
-        projectile_launched = True
-        waiting_for_launch = False

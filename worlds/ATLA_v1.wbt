@@ -9,6 +9,7 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "../protos/Projectile.proto"
 EXTERNPROTO "../protos/AtlasTurret.proto"
 EXTERNPROTO "../protos/SearchRadar.proto"
+EXTERNPROTO "../protos/Attacker.proto"
 
 WorldInfo {
 }
@@ -29,6 +30,8 @@ DEF PROJECTILE Projectile {
 DEF TURRET_BASE AtlasTurret {
 }
 DEF SEARCH_RADAR SearchRadar {
+}
+DEF ATTACKER Attacker {
 }
 
 

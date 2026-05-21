@@ -3,11 +3,9 @@
 PROTO Projectile [
   field SFVec3f translation 0 -3 0.5
   field SFString name "PROJECTILE"
-  field SFString controller "projectile_controller"
-  field SFBool supervisor TRUE
   field SFVec3f linearVelocity 0 0 0
 ] {
-  Robot {
+  Solid {
     translation IS translation
     children [
       DEF BALL_SHAPE Shape {
@@ -31,7 +29,4 @@ PROTO Projectile [
     }
     linearVelocity IS linearVelocity
   }
-  controller IS controller
-  supervisor IS supervisor
 }
-
