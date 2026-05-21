@@ -8,7 +8,7 @@ it to a turret-relative bearing using its known turret world position.
 """
 import math
 import pytest
-from stubs import StubFCR, StubCueLink, StubTrackFilter, StubMotor, StubGroundHitLink
+from stubs import StubFCR, StubCueLink, StubTrackFilter, StubMotor, StubGroundHitLink, StubBulletHitLink
 from fsm import AtlasFSM, SensorSuite, TurretHardware, FSMConfig
 
 
@@ -53,6 +53,7 @@ def _build_fsm(
     track_filter=None,
     ballistic_predictor=None,
     ground_hit_link=None,
+    bullet_hit_link=None,
     turret_position=None,
     config=None,
 ):
@@ -65,6 +66,8 @@ def _build_fsm(
         fcr = StubFCR(position=[1.0, 1.0, 1.0])
     if ground_hit_link is None:
         ground_hit_link = StubGroundHitLink()
+    if bullet_hit_link is None:
+        bullet_hit_link = StubBulletHitLink()
     if turret_position is None:
         turret_position = TURRET_POS
 
@@ -76,6 +79,7 @@ def _build_fsm(
         track_filter=track_filter,
         ballistic_predictor=ballistic_predictor,
         ground_hit_link=ground_hit_link,
+        bullet_hit_link=bullet_hit_link,
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -773,3 +777,40 @@ def test_re_entering_engaging_emits_a_fresh_fire_command():
     assert fsm.consume_fire_command() == [2.0, 3.0, 1.5]
     _force_engage(fsm, [-1.0, 4.0, 0.8])
     assert fsm.consume_fire_command() == [-1.0, 4.0, 0.8]
+
+
+# ---------------------------------------------------------------------------
+# Bullet-hit cue → RESET (projectile destroyed)
+# ---------------------------------------------------------------------------
+
+def test_bullet_hit_in_engaging_transitions_to_reset():
+    """A bullet-hit pulse while ENGAGING ends the engagement → RESET."""
+    bullet_hit_link = StubBulletHitLink(hit=True)
+    fsm, _, _ = _build_fsm(bullet_hit_link=bullet_hit_link)
+    fsm._intercept = [1.0, 1.0, 1.0]
+    fsm._transition(AtlasFSM.ENGAGING)
+    fsm.consume_fire_command()  # clear the fire command set on entry
+    fsm.step()
+    assert fsm.state == AtlasFSM.RESET
+
+
+def test_bullet_hit_in_track_predict_transitions_to_reset():
+    """A bullet-hit pulse takes precedence in TRACK_PREDICT → RESET."""
+    bullet_hit_link = StubBulletHitLink(hit=True)
+    fsm, _, _ = _build_fsm(
+        bullet_hit_link=bullet_hit_link,
+        ballistic_predictor=StubPredictor([1.0, 1.0, 1.0]),
+    )
+    fsm.state = AtlasFSM.TRACK_PREDICT
+    fsm.step()
+    assert fsm.state == AtlasFSM.RESET
+
+
+def test_no_bullet_hit_keeps_engaging():
+    """With no bullet hit (and in range), ENGAGING holds (regression guard)."""
+    fsm, _, _ = _build_fsm(bullet_hit_link=StubBulletHitLink(hit=False))
+    fsm._intercept = [1.0, 1.0, 1.0]
+    fsm._transition(AtlasFSM.ENGAGING)
+    fsm.consume_fire_command()
+    fsm.step()
+    assert fsm.state == AtlasFSM.ENGAGING
