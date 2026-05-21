@@ -709,3 +709,67 @@ def test_full_cycle_idle_to_idle():
     # RESET → IDLE
     fsm.step()
     assert fsm.state == AtlasFSM.IDLE
+
+
+# ---------------------------------------------------------------------------
+# Fire command — emitted once on entering ENGAGING
+# ---------------------------------------------------------------------------
+
+def _force_engage(fsm, intercept):
+    """Set a validated intercept and transition straight into ENGAGING.
+
+    Mirrors what _do_track_predict does at the convergence gate: _intercept is
+    set, then _transition(ENGAGING) is taken. Calling _transition directly keeps
+    the test focused on the fire-command behaviour, not the convergence logic.
+    """
+    fsm._intercept = list(intercept)
+    fsm._transition(AtlasFSM.ENGAGING)
+
+
+def test_no_fire_command_before_engaging():
+    """fire command is None until the FSM enters ENGAGING."""
+    fsm, _, _ = _build_fsm()
+    assert fsm.consume_fire_command() is None
+
+
+def test_entering_engaging_sets_fire_command_to_intercept():
+    """The → ENGAGING transition records the intercept as the fire command."""
+    fsm, _, _ = _build_fsm()
+    _force_engage(fsm, [2.0, 3.0, 1.5])
+    assert fsm.state == AtlasFSM.ENGAGING
+    assert fsm.consume_fire_command() == [2.0, 3.0, 1.5]
+
+
+def test_consume_fire_command_returns_then_clears():
+    """consume_fire_command returns the command once, then None."""
+    fsm, _, _ = _build_fsm()
+    _force_engage(fsm, [2.0, 3.0, 1.5])
+    assert fsm.consume_fire_command() == [2.0, 3.0, 1.5]
+    assert fsm.consume_fire_command() is None
+
+
+def test_fire_command_is_a_copy_not_the_intercept_alias():
+    """The fire command must not alias the FSM's internal _intercept list."""
+    fsm, _, _ = _build_fsm()
+    _force_engage(fsm, [2.0, 3.0, 1.5])
+    cmd = fsm.consume_fire_command()
+    cmd[0] = 99.0
+    assert fsm._intercept == [2.0, 3.0, 1.5]
+
+
+def test_reset_clears_an_unconsumed_fire_command():
+    """A fire command never survives a RESET."""
+    fsm, _, _ = _build_fsm()
+    _force_engage(fsm, [2.0, 3.0, 1.5])
+    fsm.state = AtlasFSM.RESET
+    fsm.step()
+    assert fsm.consume_fire_command() is None
+
+
+def test_re_entering_engaging_emits_a_fresh_fire_command():
+    """A second engagement emits its own fire command."""
+    fsm, _, _ = _build_fsm()
+    _force_engage(fsm, [2.0, 3.0, 1.5])
+    assert fsm.consume_fire_command() == [2.0, 3.0, 1.5]
+    _force_engage(fsm, [-1.0, 4.0, 0.8])
+    assert fsm.consume_fire_command() == [-1.0, 4.0, 0.8]

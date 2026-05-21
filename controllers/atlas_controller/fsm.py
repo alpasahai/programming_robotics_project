@@ -156,6 +156,11 @@ class AtlasFSM:
         self._pred_history = deque(maxlen=self.config.lookahead_steps + 1)
         self._converge_count = 0  # consecutive sub-threshold prediction-error steps
 
+        # One-shot fire command: set to a copy of the intercept [dx, dy, dz]
+        # (turret-relative metres) when the FSM enters ENGAGING; returned and
+        # cleared by the controller via consume_fire_command(). See ADR-0013.
+        self._fire_command = None
+
         # Last absolute (pan-seam-unwrapped) angle commanded to each motor.
         # Exposed via commanded_aim for telemetry/introspection. The FCR no
         # longer reads this — it gates its lock on the turret's real aim from the
@@ -195,6 +200,20 @@ class AtlasFSM:
         slewed onto the target. This property is kept for telemetry/introspection.
         """
         return (self._commanded_pan, self._commanded_tilt)
+
+    def consume_fire_command(self):
+        """Return the pending fire command and clear it, or None if none pending.
+
+        The fire command is the intercept point [dx, dy, dz] (turret-relative
+        metres) the FSM committed to on entering ENGAGING. One-shot: the
+        controller calls this once per step after fsm.step(); it is returned
+        exactly once and is None on every subsequent call until the FSM
+        re-enters ENGAGING. The FSM spawns nothing — node launch is the
+        controller's job (keeps the FSM pure and unit-testable).
+        """
+        command = self._fire_command
+        self._fire_command = None
+        return command
 
     # --------------------------------------------------------- state handlers
 
@@ -369,6 +388,7 @@ class AtlasFSM:
         self.sensors.cue_link.clear()
         self._target = None
         self._intercept = None
+        self._fire_command = None
         self._aim_entry_done = False
         self._converge_count = 0
         self._pred_history.clear()
@@ -557,3 +577,8 @@ class AtlasFSM:
             self._intercept = None
             self._converge_count = 0
             self._pred_history.clear()
+        elif new_state == self.ENGAGING:
+            # Commit the shot: hand the validated intercept to the controller
+            # exactly once. _intercept is guaranteed set — TRACK_PREDICT sets it
+            # immediately before taking this transition.
+            self._fire_command = list(self._intercept)
