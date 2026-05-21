@@ -7,6 +7,13 @@ PROTO SearchRadar [
   field SFString name "SEARCH_RADAR"
   field SFString motorName "SEARCH_RADAR_MOTOR"
   field SFBool supervisor TRUE
+  # FOV-beam visual dimensions. Exposed so search_radar_controller can sync them
+  # to the SearchRadar software spec at runtime via the proto instance (setting
+  # the internal nodes directly is rejected as a read-only PROTO field). Defaults
+  # match the spec derived from the controller's range/beam-width constants.
+  field SFVec3f fovBeamTranslation 0 10 1.1
+  field SFFloat fovConeHeight 20
+  field SFFloat fovConeRadius 3.5
 ] {
   Robot {
     translation IS translation
@@ -52,7 +59,7 @@ PROTO SearchRadar [
             }
 
             DEF SR_FOV_BEAM Pose {
-              translation 0 10 1.1
+              translation IS fovBeamTranslation
               # The controller updates this cone from SearchRadar's software
               # range and beam angle. Local +Y is azimuth 0 in the SearchRadar
               # math. The child Pose rotates Webots Cone local +Z back toward
@@ -71,8 +78,8 @@ PROTO SearchRadar [
                       }
 
                       geometry DEF SR_FOV_CONE Cone {
-                        bottomRadius 3.5
-                        height 20
+                        bottomRadius IS fovConeRadius
+                        height IS fovConeHeight
                         subdivision 32
                         side TRUE
                         bottom TRUE

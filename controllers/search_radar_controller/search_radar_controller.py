@@ -192,15 +192,17 @@ if fov_beam_node is None or fov_cone_node is None:
     )
 else:
     beam_spec = search_radar.get_beam_visual_spec()
-    fov_beam_node.getField("translation").setSFVec3f(
+    # Write the exposed PROTO parameters on the radar instance, not the internal
+    # SR_FOV_* nodes — internal PROTO fields are read-only via the supervisor API.
+    radar_node.getField("fovBeamTranslation").setSFVec3f(
         [
             beam_spec.cone_center_local[0],
             beam_spec.cone_center_local[1],
             SEARCH_RADAR_BEAM_LOCAL_Z_M + beam_spec.cone_center_local[2],
         ]
     )
-    fov_cone_node.getField("height").setSFFloat(beam_spec.cone_height)
-    fov_cone_node.getField("bottomRadius").setSFFloat(beam_spec.cone_radius)
+    radar_node.getField("fovConeHeight").setSFFloat(beam_spec.cone_height)
+    radar_node.getField("fovConeRadius").setSFFloat(beam_spec.cone_radius)
 
     log.info(
         "FOV visual cone configured from SearchRadar visual spec: "
