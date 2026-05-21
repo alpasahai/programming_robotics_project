@@ -20,19 +20,21 @@ crosses the boundary, never a node handle.
 
 DEF names (confirmed from worlds/ATLA_v1.wbt)
 ----------------------------------------------
-  PROJECTILE   — the SimulatedProjectile node
+  PROJECTILE   — the Projectile node
   TURRET_BASE  — the AtlasTurret node (turret origin, world frame)
   SEARCH_RADAR — this robot's own node (base pose; phase-centre offset is
                  defined by SearchRadar.proto)
 """
 
-import logging
 import math
 import struct
 
 from controller import Supervisor
 
+from atlas_logging import configure
+from scene import DEF_PROJECTILE, DEF_TURRET_BASE
 from search_radar import SearchRadar
+from sweep_control import next_bounded_sweep_target
 
 # Search Radar sensor and visualisation parameters. Keep these constants as the
 # single source for both the SearchRadar model and the visible debug beam.
@@ -42,35 +44,24 @@ SEARCH_RADAR_BEAM_WIDTH_RAD = 0.35
 SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.15
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20
 SEARCH_RADAR_NOISE_STD_M = 0.2
-SEARCH_RADAR_ROTATING_ENDPOINT_Z_M = 1.0
-SEARCH_RADAR_BEAM_LOCAL_Z_M = 1.1
-# SearchRadar.proto places the rotating endpoint Solid at z=1.0 and the FOV
-# Pose / radar head at local z=1.1 inside that endpoint, so the sensor phase
-# centre is 2.1m above the Robot origin.
-SEARCH_RADAR_PHASE_CENTER_OFFSET_M = [
-    0.0,
-    0.0,
-    SEARCH_RADAR_ROTATING_ENDPOINT_Z_M + SEARCH_RADAR_BEAM_LOCAL_Z_M,
-]
+SEARCH_RADAR_MIN_ANGLE_RAD = 0.0
+SEARCH_RADAR_MAX_ANGLE_RAD = math.pi
+SEARCH_RADAR_SWEEP_TARGET_TOLERANCE_RAD = 0.02
+# The radar's mounting geometry lives solely in SearchRadar.proto, driven by its
+# single `mastHeight` field. The controller derives the phase centre by reading
+# the rendered SR_FOV_BEAM node instead of duplicating z offsets here — set
+# `SearchRadar { mastHeight ... }` in the world and the controller follows.
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
 #
-# Same structure as atlas_controller.py: Webots console via StreamHandler and a
-# controller-local file trace for review after a run.
+# Webots console via StreamHandler and a controller-local file trace for review
+# after a run. The console level is set centrally in lib/atlas_logging.py
+# (LOG_LEVELS["SearchRadarController"]); override per run with
+# SEARCHRADARCONTROLLER_LOG_LEVEL or ATLAS_LOG_LEVEL.
 # ---------------------------------------------------------------------------
 
-TELEMETRY_LEVEL = logging.DEBUG
-
-logging.basicConfig(
-    level=TELEMETRY_LEVEL,
-    format="[%(levelname)s - %(name)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("search_radar_telemetry.log", mode="w", encoding="utf-8"),
-    ],
-)
-log = logging.getLogger("SearchRadarController")
+log = configure("SearchRadarController", log_file="search_radar_telemetry.log")
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -91,21 +82,35 @@ if motor is None:
     while robot.step(timestep) != -1:
         pass
 
-motor.setPosition(float("inf"))
-motor_velocity = SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP / (timestep / 1000.0)
-motor.setVelocity(motor_velocity)
-log.info(
-    "SEARCH_RADAR_MOTOR spinning at %.3f rad/s; SearchRadar gates on the "
-    "measured joint angle (nominal scan_rate %.3f rad/step)",
-    motor_velocity,
-    SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
-)
-
 angle_sensor = robot.getDevice("SEARCH_RADAR_ANGLE")
 if angle_sensor is None:
     log.warning("SEARCH_RADAR_ANGLE not found - visual beam angle will not be logged")
 else:
     angle_sensor.enable(timestep)
+
+motor_velocity = SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP / (timestep / 1000.0)
+motor.setVelocity(motor_velocity)
+
+if angle_sensor is not None:
+    scan_target = SEARCH_RADAR_MAX_ANGLE_RAD
+    motor.setPosition(scan_target)
+    log.info(
+        "SEARCH_RADAR_MOTOR sweeping between %.3f and %.3f rad at %.3f rad/s; "
+        "SearchRadar gates on the measured joint angle (nominal scan_rate %.3f rad/step)",
+        SEARCH_RADAR_MIN_ANGLE_RAD,
+        SEARCH_RADAR_MAX_ANGLE_RAD,
+        motor_velocity,
+        SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
+    )
+else:
+    scan_target = None
+    motor.setPosition(float("inf"))
+    log.info(
+        "SEARCH_RADAR_MOTOR spinning at %.3f rad/s without angle feedback "
+        "(nominal scan_rate %.3f rad/step)",
+        motor_velocity,
+        SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP,
+    )
 
 emitter = robot.getDevice("SR_CUE_EMITTER")
 if emitter is None:
@@ -117,27 +122,30 @@ else:
 # Scene nodes — confirmed DEF names from worlds/ATLA_v1.wbt
 # ---------------------------------------------------------------------------
 
-projectile_node = robot.getFromDef("PROJECTILE")
+projectile_node = robot.getFromDef(DEF_PROJECTILE)
 if projectile_node is None:
-    raise RuntimeError("[SR] Could not find DEF PROJECTILE in the world file.")
+    raise RuntimeError(f"[SR] Could not find DEF {DEF_PROJECTILE} in the world file.")
 
-turret_node = robot.getFromDef("TURRET_BASE")
+turret_node = robot.getFromDef(DEF_TURRET_BASE)
 if turret_node is None:
-    raise RuntimeError("[SR] Could not find DEF TURRET_BASE in the world file.")
+    raise RuntimeError(f"[SR] Could not find DEF {DEF_TURRET_BASE} in the world file.")
 
 radar_node = robot.getSelf()
+
+# The rendered FOV beam node is the single source of truth for the radar's beam
+# pose. Fetched once here and reused for seeding the phase centre, syncing the
+# visible cone, and the per-step alignment in the main loop.
+fov_beam_node = radar_node.getFromProtoDef("SR_FOV_BEAM")
+fov_cone_node = radar_node.getFromProtoDef("SR_FOV_CONE")
 
 # Static snapshots — neither the turret nor the radar body translates.
 turret_position = list(turret_node.getPosition())
 radar_origin_position = list(radar_node.getPosition())
-radar_position = [
-    radar_origin_position[i] + SEARCH_RADAR_PHASE_CENTER_OFFSET_M[i]
-    for i in range(3)
-]
 
 log.info("turret_position (world) = %s", [round(v, 3) for v in turret_position])
-log.info("radar_origin_position (world) = %s", [round(v, 3) for v in radar_origin_position])
-log.info("radar_phase_center    (world) = %s", [round(v, 3) for v in radar_position])
+log.info(
+    "radar_origin_position (world) = %s", [round(v, 3) for v in radar_origin_position]
+)
 
 
 def _joint_angle_to_search_azimuth(joint_angle: float) -> float:
@@ -160,12 +168,23 @@ def _visual_beam_pose_to_search_frame(beam_node, beam_range: float):
     orientation = beam_node.getOrientation()
     direction = [orientation[1], orientation[4], orientation[7]]
     center = beam_node.getPosition()
-    origin = [
-        center[i] - direction[i] * (beam_range / 2.0)
-        for i in range(3)
-    ]
+    origin = [center[i] - direction[i] * (beam_range / 2.0) for i in range(3)]
     azimuth = math.atan2(direction[0], direction[1]) % (2 * math.pi)
     return origin, azimuth, direction
+
+
+# Seed the phase centre (cone apex) by reading the rendered beam node — the same
+# derivation the main loop applies every step. This initial value is overwritten
+# on the first loop iteration before any detection runs, so it only covers the
+# pre-first-step window and the log below; the proto geometry, not a constant,
+# determines it.
+if fov_beam_node is not None:
+    radar_position, _, _ = _visual_beam_pose_to_search_frame(
+        fov_beam_node, SEARCH_RADAR_MAX_RANGE_M
+    )
+else:
+    radar_position = list(radar_origin_position)  # degraded: no beam visual present
+log.info("radar_phase_center    (world) = %s", [round(v, 3) for v in radar_position])
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +193,7 @@ def _visual_beam_pose_to_search_frame(beam_node, beam_range: float):
 # ---------------------------------------------------------------------------
 
 search_radar = SearchRadar(
-    [projectile_node],          # list of all projectile nodes in the scene
+    [projectile_node],  # list of all projectile nodes in the scene
     turret_position,
     radar_position,
     noise_std=SEARCH_RADAR_NOISE_STD_M,  # high noise — SearchRadar is coarse
@@ -191,8 +210,6 @@ search_radar = SearchRadar(
 # ---------------------------------------------------------------------------
 
 
-fov_beam_node = radar_node.getFromProtoDef("SR_FOV_BEAM")
-fov_cone_node = radar_node.getFromProtoDef("SR_FOV_CONE")
 if fov_beam_node is None or fov_cone_node is None:
     log.warning(
         "Search Radar FOV visual nodes not found via getFromProtoDef; "
@@ -200,22 +217,24 @@ if fov_beam_node is None or fov_cone_node is None:
     )
 else:
     beam_spec = search_radar.get_beam_visual_spec()
-    fov_beam_node.getField("translation").setSFVec3f(
+    # Set only the spec-derived cone offset (x/y) and dimensions. The beam's
+    # mounting height now lives in the proto (mastHeight drives the mount Pose),
+    # so the cone offset's z stays 0 and we no longer touch beam height here.
+    radar_node.getField("fovConeOffset").setSFVec3f(
         [
             beam_spec.cone_center_local[0],
             beam_spec.cone_center_local[1],
-            SEARCH_RADAR_BEAM_LOCAL_Z_M + beam_spec.cone_center_local[2],
+            beam_spec.cone_center_local[2],
         ]
     )
-    fov_cone_node.getField("height").setSFFloat(beam_spec.cone_height)
-    fov_cone_node.getField("bottomRadius").setSFFloat(beam_spec.cone_radius)
+    radar_node.getField("fovConeHeight").setSFFloat(beam_spec.cone_height)
+    radar_node.getField("fovConeRadius").setSFFloat(beam_spec.cone_radius)
 
     log.info(
         "FOV visual cone configured from SearchRadar visual spec: "
         "origin_world=%s centre_azimuth=%.3frad range=%.2fm "
         "beam_width=%.3frad vertical_fov=%.3frad half_angle=%.3frad "
-        "cone_height=%.3fm cone_radius=%.3fm "
-        "local_center=%s phase_center_offset=%s",
+        "cone_height=%.3fm cone_radius=%.3fm local_center=%s",
         [round(v, 3) for v in beam_spec.origin_world],
         beam_spec.centre_azimuth,
         beam_spec.max_range,
@@ -225,7 +244,6 @@ else:
         beam_spec.cone_height,
         beam_spec.cone_radius,
         [round(v, 3) for v in beam_spec.cone_center_local],
-        [round(v, 3) for v in SEARCH_RADAR_PHASE_CENTER_OFFSET_M],
     )
 
 # ---------------------------------------------------------------------------
@@ -236,6 +254,18 @@ step_count = 0
 
 while robot.step(timestep) != -1:
     step_count += 1
+
+    if angle_sensor is not None and scan_target is not None:
+        next_scan_target = next_bounded_sweep_target(
+            joint_angle=angle_sensor.getValue(),
+            current_target=scan_target,
+            min_angle=SEARCH_RADAR_MIN_ANGLE_RAD,
+            max_angle=SEARCH_RADAR_MAX_ANGLE_RAD,
+            tolerance=SEARCH_RADAR_SWEEP_TARGET_TOLERANCE_RAD,
+        )
+        if next_scan_target != scan_target:
+            scan_target = next_scan_target
+            motor.setPosition(scan_target)
 
     # 1. Align the radar model to the actual rendered FOV node, then update.
     #    This makes the proto visual the source of truth for beam direction and

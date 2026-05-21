@@ -4,4 +4,4 @@ worlds/.*.jpg
 .claude/
 .venv/
 *.log
-controllers/atlas_controller/runtime.ini
+runtime.ini

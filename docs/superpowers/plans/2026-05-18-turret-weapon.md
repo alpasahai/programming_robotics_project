@@ -173,7 +173,7 @@ git commit -m "feat(fsm): emit a one-shot fire command on entering ENGAGING"
 
 ## Task 2 — `AtlasBullet.proto` and the importable declaration
 
-**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — Webots PROTO/`.wbt` syntax. Inspect `protos/SimulatedProjectile.proto` and `protos/AtlasTurret.proto` first to copy header and field conventions.
+**Model: sonnet (Codex: `gpt-5.4`) · Effort: medium** — Webots PROTO/`.wbt` syntax. Inspect `protos/Projectile.proto` and `protos/AtlasTurret.proto` first to copy header and field conventions.
 
 **Required:** The turret needs a projectile template to spawn. It must be a `Robot` (not a plain `Solid`) because it carries a `TouchSensor` device and a controller. It is never pre-placed — `IMPORTABLE EXTERNPROTO` makes it spawnable at runtime via `importMFNodeFromString`.
 
@@ -225,7 +225,7 @@ PROTO AtlasBullet [
 ```
 
 Notes for the implementer:
-- The blue colour keeps the bullet visually distinct from the red incoming `SimulatedProjectile`.
+- The blue colour keeps the bullet visually distinct from the red incoming `Projectile`.
 - The `Robot` node has a built-in `customData` `SFString` field — the bullet controller writes it and the turret supervisor reads it. It does **not** need declaring in the PROTO interface.
 - `radius 0.12` and `mass 0.2` are starting values; the orchestrator/human may tune them during Task 6 verification (a larger radius reduces tunelling).
 
@@ -417,7 +417,7 @@ def _fire_bullet(intercept):
             log.info("FIRE ignored — a bullet is still in flight")
 ```
 
-> **Note:** the existing `SimulatedProjectile` reset/relaunch block at the end of the loop (steps labelled "5. Manage projectile") is the incoming-ball logic and is being reworked separately. **Leave it untouched** — this plan neither depends on it nor modifies it. Task 5 adds the *bullet* lifecycle as a distinct block.
+> **Note:** the existing `Projectile` reset/relaunch block at the end of the loop (steps labelled "5. Manage projectile") is the incoming-ball logic and is being reworked separately. **Leave it untouched** — this plan neither depends on it nor modifies it. Task 5 adds the *bullet* lifecycle as a distinct block.
 
 **Verification (manual, in Webots):**
 
@@ -586,5 +586,7 @@ git commit -m "docs: record the turret fired-projectile weapon (ADR-0008)"
 - [ ] In Webots, when the FSM reaches `ENGAGING` a blue bullet spawns at the turret and launches along the aim direction.
 - [ ] A bullet that strikes the ball logs `BALL HIT` and is removed; a bullet that reaches the ground logs a ground resolution and is removed; the safety timeout never fires in normal play.
 - [ ] At most one bullet exists in the scene at a time, and engagements after the first still fire correctly.
-- [ ] No existing `SimulatedProjectile` (incoming-ball) behaviour was modified.
+- [ ] No existing `Projectile` (incoming-ball) behaviour was modified.
 - [ ] `AtlasLaser` is unchanged — still cosmetic.
+
+

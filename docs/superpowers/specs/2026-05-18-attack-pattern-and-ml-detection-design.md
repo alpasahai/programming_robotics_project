@@ -37,7 +37,7 @@ supervisor owns them all.
 
 ### Projectile handling
 
-First version uses **one** `SimulatedProjectile` node, recycled (reset, not
+First version uses **one** `Projectile` node, recycled (reset, not
 deleted) after each ball resolves. A *pool* of pre-placed nodes is the later
 generalization for overlapping/simultaneous projectiles; dynamic spawning via
 `importMFNode` is a further option if waves must be unbounded.
@@ -88,7 +88,7 @@ built and tested.
 ### Mechanics
 
 - The turret's "bullet" is a small `Solid` with `Physics` and a `boundingObject`
-  — structurally the same as `SimulatedProjectile`.
+  — structurally the same as `Projectile`.
 - The turret controller (a supervisor) launches it with `setVelocity()` along
   the current aim direction — the same mechanism the attacker uses.
 - A **hit** is a genuine Webots physical collision between the bullet's
@@ -184,3 +184,4 @@ of projectile nodes, so that side is ready.
 - A pool of incoming projectiles / turret bullets (vs single recycled nodes).
 - Dynamic projectile spawning (vs recycling).
 - Drag / damping physics ("hard mode").
+

@@ -1,6 +1,7 @@
 #VRML_SIM R2025a utf8
+# This is the attacker projectile.
 
-PROTO SimulatedProjectile [
+PROTO Projectile [
   field SFVec3f translation 0 -3 0.5
   field SFString name "PROJECTILE"
   field SFVec3f linearVelocity 0 0 0

@@ -16,6 +16,18 @@ Wide-beam acquisition radar external to ATLAS. Implemented as a dedicated Webots
 
 ATLAS's own narrow-beam on-board radar sensor, embodied by the turret. It is simulated, but no longer omniscient: each update is gated by range and by an FOV cone around the turret's commanded aim. When the Search Radar cue slews the turret onto the projectile, the FCR locks and reports low-noise turret-relative measurements to the Track Filter. It has no independent boresight or `set_target()` interface. See ADR-0008.
 
+## Attacker
+
+The offense side of the turret-defense game. A device-less supervisor `Robot` (`Attacker.proto`, DEF `ATTACKER`) running `attacker_controller`. It owns the incoming `Projectile`: it spawns the ball, registers each ground hit, despawns the ball, and spawns a fresh one after a delay. Today it drives a single recycled ball on a fixed cadence; the attack-pattern schedule and the ML launch log will live here later. The lifecycle logic lives in the unit-tested `Projectile` class, not in the controller loop. See ADR-0011 and `docs/superpowers/specs/2026-05-18-attack-pattern-and-ml-detection-design.md`.
+
+## Projectile (incoming ball)
+
+The target the turret defends against, defined by `Projectile.proto` (DEF `PROJECTILE`). A passive `Solid` with physics and no controller of its own — the `Attacker` drives it via the supervisor API. On a ground hit it is *recycled*, not deleted: the attacker parks it out of sensor range ("despawn"), then teleports it back to the spawn point and relaunches it ("spawn"). Recycling a single node keeps the `getFromDef("PROJECTILE")` handles that `search_radar_controller` and `atlas_controller` hold valid. Distinct from the `Bullet`, which the turret fires *at* it. See ADR-0011.
+
+## Ground Hit
+
+The event where the incoming `Projectile` touches the floor. Detected from the ball's real physics **contact points** (`getContactPoints`, world frame), not a height heuristic: a contact near the floor (`z <= floor_contact_z_m`) is a ground hit, a contact up in the air is a `Bullet` hit. Webots' contact `node_id` identifies the ball itself, not the other body, so contact **height** is the discriminator between the two outcomes. A ground contact only counts once the ball has cleared the floor since launch (an "airborne latch"), so the floor contact present at spawn is not mistaken for a landing. The `Attacker` registers each hit — incrementing a count and firing a callback — then despawns and respawns the ball. Registration is the seam where scoring / the future referee will hook in. See ADR-0011.
+
 ## ATLAS (Autonomous Tracking and Laser Aiming System)
 
 The cue-driven fire-control system being built. Receives coarse world-frame cues from the Search Radar, slews the turret until its own FCR locks, filters FCR measurements via the Track Filter, and commands the turret via the FSM.
@@ -42,8 +54,9 @@ The turret destroys the incoming ball by firing a physical projectile (the Bulle
 
 ## Bullet
 
-The turret's fired projectile, defined by `AtlasBullet.proto`. A self-reporting `Robot` carrying a `bumper`-type `TouchSensor` and the `atlas_bullet_controller`; it detects its own collisions and publishes a hit via its `customData` field. Spawned dynamically by the turret supervisor at fire time and removed when the shot resolves. Distinct from the incoming ball (`SimulatedProjectile`), which the turret aims *at*.
+The turret's fired projectile, defined by `AtlasBullet.proto`. A self-reporting `Robot` carrying a `bumper`-type `TouchSensor` and the `atlas_bullet_controller`; it detects its own collisions and publishes a hit via its `customData` field. Spawned dynamically by the turret supervisor at fire time and removed when the shot resolves. Distinct from the incoming ball (`Projectile`), which the turret aims *at*.
 
 ## Fire Command
 
 The one-shot event the FSM emits on entering the `ENGAGING` state, carrying the intercept/aim for the shot. The FSM only produces the event; `atlas_controller` consumes it to spawn and launch the Bullet. Keeps node spawning out of the FSM so the FSM stays pure and unit testable.
+

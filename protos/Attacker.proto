@@ -1,0 +1,25 @@
+#VRML_SIM R2025a utf8
+# Attacker — offense supervisor for the turret-defense game.
+#
+# A device-less supervisor Robot. It owns the incoming projectile(s): it
+# launches them, detects ground hits, and recycles them. The attack-pattern
+# schedule (launch timing/locations) and the ML launch log will live in its
+# controller. Incoming projectiles are passive Solid nodes the attacker drives
+# via the supervisor API — they have no controller of their own.
+# See docs/superpowers/specs/2026-05-18-attack-pattern-and-ml-detection-design.md
+
+PROTO Attacker [
+  field SFVec3f translation 0 0 0
+  field SFString name "ATTACKER"
+  field SFBool supervisor TRUE
+] {
+  Robot {
+    translation IS translation
+    name IS name
+    model "attacker"
+    controller "attacker_controller"
+    supervisor IS supervisor
+    children [
+    ]
+  }
+}
