@@ -15,6 +15,8 @@ The projectile itself is a passive Solid (DEF PROJECTILE); the attacker drives
 it via the supervisor API and getFromDef, never via a node handle on itself.
 """
 
+import struct
+
 from controller import Supervisor
 
 from atlas_logging import configure
@@ -25,6 +27,10 @@ log = configure("AttackerController", log_file="attacker_telemetry.log")
 
 robot = Supervisor()
 timestep = int(robot.getBasicTimeStep())
+
+emitter = robot.getDevice("ATTACKER_EMITTER")
+if emitter is None:
+    raise RuntimeError("[ATTACKER] Could not find device ATTACKER_EMITTER.")
 
 projectile_node = robot.getFromDef(DEF_PROJECTILE)
 if projectile_node is None:
@@ -50,6 +56,10 @@ def on_ground_hit(count):
         robot.getTime(),
         config.respawn_delay_ms,
     )
+    # Emit the authoritative ground-hit pulse (channel 2, one 4-byte int =
+    # running ground-hit count). This is ATLAS's only source of ground-hit
+    # truth — see docs/superpowers/specs/2026-05-21-attacker-ground-hit-cue-design.md.
+    emitter.send(struct.pack("i", count))
 
 
 def on_bullet_hit(count):
