@@ -6,7 +6,7 @@ PROTO AtlasLaser [
   field SFVec3f    translation  0 0 0
   field SFRotation rotation     0 0 0 0
   field SFColor    color        1 0 0
-  field SFFloat    length       8
+  field SFFloat    length       20
   field SFFloat    radius       0.008
   field SFFloat    transparency 0.8
 ] {

@@ -23,11 +23,18 @@ PROTO AtlasTurret [
       HingeJoint {
         jointParameters HingeJointParameters {
           position 0
-          axis 0 0 1
+          # -Z so a positive pan command swings the +Y boresight toward +X
+          # (increasing azimuth), matching the FSM/geometry convention
+          # azimuth = atan2(dx, dy). See lib/geometry.py.
+          axis 0 0 -1
         }
         device [
           RotationalMotor {
             name "PAN_MOTOR"
+            maxVelocity 10
+          }
+          PositionSensor {
+            name "PAN_SENSOR"
           }
         ]
         endPoint Solid {
@@ -35,7 +42,11 @@ PROTO AtlasTurret [
           children [
             HingeJoint {
               jointParameters HingeJointParameters {
-                axis 0 1 0
+                # +X so tilt elevates the +Y boresight (about the horizontal axis
+                # perpendicular to it). The previous +Y axis was parallel to the
+                # beam, so tilting spun the laser about itself and the beam never
+                # left the horizontal plane. tilt = atan2(dz, hypot(dx,dy)).
+                axis 1 0 0
                 anchor 0 0 0.1   # pivot at the tilt box centre, not the pan origin
               }
               device [
@@ -45,6 +56,10 @@ PROTO AtlasTurret [
                   # horizontal (0) to straight up (+pi/2).
                   minPosition -1.5708
                   maxPosition 1.5708
+                  maxVelocity 10
+                }
+                PositionSensor {
+                  name "TILT_SENSOR"
                 }
               ]
               endPoint Solid {
@@ -59,8 +74,8 @@ PROTO AtlasTurret [
                     }
                   }
                   AtlasLaser {
-                    translation 0 0 4
-                    rotation 0 0 1 0
+                    translation 0 10.1 0
+                    rotation 1 0 0 1.5708
                   }
                 ]
                 name "TILT_PLATFORM"

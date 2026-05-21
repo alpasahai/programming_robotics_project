@@ -78,6 +78,10 @@ class StubCueLink:
     def update(self):
         pass
 
+    def clear(self):
+        """Discard the stored cue, mirroring SearchRadarLink.clear()."""
+        self.cue = None
+
     def get_cue(self):
         """Return the configured world-frame cue, or None."""
         return self.cue
@@ -110,6 +114,9 @@ class StubTrackFilter:
         pass
 
     def update_fcr(self, m):
+        pass
+
+    def update_search(self, m):
         pass
 
     def reset(self):

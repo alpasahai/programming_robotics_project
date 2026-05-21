@@ -1,7 +1,8 @@
-"""Atlas FSM — 7-state finite state machine governing turret behaviour."""
+"""Atlas FSM — 5-state finite state machine governing turret behaviour."""
 
 import logging
 import math
+from collections import deque
 from dataclasses import dataclass
 
 _log = logging.getLogger("AtlasFSM")
@@ -45,69 +46,70 @@ class FSMConfig:
     """Tunable parameters for AtlasFSM behaviour.
 
     All fields have sensible defaults for normal operation. Override in tests
-    to speed up state transitions (e.g. ACQUIRE_FRAMES=1) or adjust thresholds.
+    to speed up state transitions (e.g. acquire_frames=1) or adjust thresholds.
     """
 
-    max_range: float = 10.0  # metres — target beyond this → RESET
+    max_range: float = 10.0  # metres — target/intercept beyond this → RESET
     ground_threshold: float = 0.1  # metres world-Z — telemetry readout only; not used by FSM logic
-    acquire_frames: int = 3  # consecutive detections to leave SEARCH
-    min_track_frames: int = 15  # TrackFilter frames before PREDICT
+    acquire_frames: int = 3  # consecutive cues to leave IDLE
+    # IDLE beam direction (radians, Z-up ENU). The turret holds this fixed aim
+    # while waiting for a Search Radar cue — no pan sweep. Rests pointing
+    # straight up (tilt = +pi/2 = the tilt limit), a neutral skyward stance from
+    # which the turret slews down onto the cue when one arrives. pan is
+    # irrelevant while pointing straight up.
+    idle_pan: float = 0.0
+    idle_tilt: float = math.pi / 2
+    # TRACK_PREDICT → ENGAGING gate. Each step compares the intercept predicted
+    # lookahead_steps ago FOR the current step against the filter's current
+    # position estimate. When that prediction error stays below
+    # track_error_threshold for converge_frames consecutive steps, the
+    # prediction is trustworthy enough to fire. See _do_track_predict.
+    track_error_threshold: float = 0.3  # metres
+    converge_frames: int = 3  # consecutive sub-threshold steps before firing
     # lookahead_steps tuned for the ATLAS projectile (~1.6 m apex, ~1.2 s flight):
     # at a 32 ms timestep, 10 steps = 0.32 s, keeping the predicted intercept
     # airborne. A longer lookahead overshoots the projectile's landing and the
-    # intercept falls below ground_threshold — see ADR-0001 and the regression
-    # test test_default_lookahead_keeps_intercept_above_ground.
-    aim_error_threshold: float = (
-        0.05  # radians — guards the AIMING→ENGAGING transition.
-    )
-    # _do_aim measures the angular offset between the desired
-    # intercept angles and the FSM's own last-commanded angles;
-    # since the intercept is static (fixed by PREDICT), this
-    # reaches zero within ~2 steps regardless of the threshold.
-    # A true mechanical-convergence check would require a Webots
-    # PositionSensor (not currently fitted). See _do_aim for the
-    # full rationale.
-    search_speed: float = 0.02  # radians per step during pan sweep
-    search_pan_limit: float = 1.4  # radians (~80°) sweep extent
+    # intercept falls below ground_threshold — see ADR-0001.
     lookahead_steps: int = 10  # timesteps ahead for intercept (see note above)
 
 
 class AtlasFSM:
-    """7-state FSM governing all ATLAS turret behaviour.
+    """5-state FSM governing all ATLAS turret behaviour.
 
     States
     ------
-    SEARCH   : Pan sweep. Waits for Search Radar cues over the radio link.
-    ACQUIRE  : Cue received. Turret slews toward the cued world position and
-               the TrackFilter is reset. Waits for the FCR to lock and the
-               TrackFilter to initialise.
-    TRACK    : TrackFilter fusing both sensors. Turret follows filtered position.
-               Waits for MIN_TRACK_FRAMES before attempting PREDICT.
-    PREDICT  : BallisticTrajectoryPredictor computes intercept point. Validates
-               the intercept is within max_range before AIMING.
-    AIMING   : Turret slews to intercept point. Waits for aim error < threshold.
-    ENGAGING : Laser active. Turret holds aim. Transitions to RESET when the
-               attacker's ground-hit cue fires or the target leaves max_range.
-    RESET    : Clears all state. Returns to SEARCH.
+    IDLE          : Turret holds a fixed beam direction (idle_pan, idle_tilt) and
+                    waits for Search Radar cues over the radio link. No pan sweep.
+    AIM           : Cue received. Turret slews toward the cued world position and
+                    the TrackFilter is reset. Aims off the raw cue only (no fused
+                    estimate yet). Waits for the FCR to lock onto the target.
+    TRACK_PREDICT : TrackFilter fuses both sensors — the FCR continuously (main
+                    loop) and the Search Radar cue here. Turret follows the filtered
+                    position while the BallisticTrajectoryPredictor computes the
+                    intercept. Fires when the predicted-vs-observed error converges.
+    ENGAGING      : Holds aim at the fired intercept. No more predictions.
+                    Transitions to RESET when the attacker's ground-hit cue fires
+                    or the target leaves max_range.
+    RESET         : Wipes the Kalman filter and all bookkeeping. Returns to IDLE.
+
+    Readiness to fire is the ENGAGING state itself — there is no separate flag.
+    Consumers check ``fsm.state == AtlasFSM.ENGAGING``.
 
     Sensor fusion
     -------------
-    The FCR feeds the TrackFilter every timestep (continuous fusion). The
-    Search Radar runs as a separate process and reaches the FSM only as a
-    world-frame cue over the radio link, consumed by SEARCH and ACQUIRE.
+    The FCR feeds the TrackFilter every timestep (continuous fusion, main loop).
+    The Search Radar runs as a separate process and reaches the FSM only as a
+    world-frame cue over the radio link; the FSM fuses it into the filter during
+    TRACK_PREDICT (dual-sensor fusion). See ADR-0003.
 
     Coordinate system: Z-up ENU.
         pan  = atan2(dx, dy)
         tilt = atan2(dz, sqrt(dx² + dy²))
-
-    See ADR-0003 for continuous fusion rationale.
     """
 
-    SEARCH = "SEARCH"
-    ACQUIRE = "ACQUIRE"
-    TRACK = "TRACK"
-    PREDICT = "PREDICT"
-    AIMING = "AIMING"
+    IDLE = "IDLE"
+    AIM = "AIM"
+    TRACK_PREDICT = "TRACK_PREDICT"
     ENGAGING = "ENGAGING"
     RESET = "RESET"
 
@@ -117,7 +119,7 @@ class AtlasFSM:
         hardware: TurretHardware,
         config: FSMConfig | None = None,
     ) -> None:
-        """Initialise the FSM in SEARCH state with all per-state bookkeeping.
+        """Initialise the FSM in IDLE state with all per-state bookkeeping.
 
         Args:
             sensors:  All sensing/processing components. See SensorSuite.
@@ -128,12 +130,10 @@ class AtlasFSM:
         self.hardware = hardware
         self.config = config if config is not None else FSMConfig()
 
-        self.state = self.SEARCH
+        self.state = self.IDLE
 
-        # SEARCH bookkeeping
+        # IDLE bookkeeping
         self._detection_count = 0  # consecutive steps with a non-None cue from the cue link
-        self._pan_angle = 0.0  # current pan motor angle (radians)
-        self._pan_direction = 1  # +1 sweeping positive, -1 sweeping negative
 
         # Last angle actually commanded to the pan motor (radians, unwrapped).
         # Needed because pan = atan2(dx, dy) is discontinuous: when the target
@@ -144,20 +144,24 @@ class AtlasFSM:
         # the motor always takes the short way round. See _unwrap_pan().
         self._last_pan_cmd = 0.0
 
-        # ACQUIRE bookkeeping
+        # AIM bookkeeping
         self._target = None  # cued target — world-frame position [x, y, z]
-        self._acquire_entry_done = False  # guard: entry actions fire exactly once
+        self._aim_entry_done = False  # guard: entry actions fire exactly once
 
-        # TRACK bookkeeping
-        self._track_frames = 0  # consecutive steps spent in TRACK
+        # TRACK_PREDICT bookkeeping
+        self._intercept = None  # validated intercept point, set at the ENGAGING transition
+        # Rolling history of recent predicted intercepts. When full,
+        # _pred_history[0] is the intercept predicted lookahead_steps ago FOR the
+        # current step, so it can be compared against the current estimate.
+        self._pred_history = deque(maxlen=self.config.lookahead_steps + 1)
+        self._converge_count = 0  # consecutive sub-threshold prediction-error steps
 
-        # PREDICT bookkeeping
-        self._intercept = None  # validated intercept point for AIMING
-
-        # AIMING / ENGAGING bookkeeping
-        self._commanded_pan = 0.0  # last pan angle sent to the pan motor (radians)
-        self._commanded_tilt = 0.0  # last tilt angle sent to the tilt motor (radians)
-        self.laser_active = False  # True while ENGAGING; read by the controller
+        # Last absolute (pan-seam-unwrapped) angle commanded to each motor.
+        # Exposed via commanded_aim for telemetry/introspection. The FCR no
+        # longer reads this — it gates its lock on the turret's real aim from the
+        # PAN/TILT position sensors (see atlas_controller).
+        self._commanded_pan = 0.0
+        self._commanded_tilt = 0.0
 
     def step(self) -> None:
         """Advance FSM by one timestep.
@@ -167,16 +171,12 @@ class AtlasFSM:
         track_filter.predict(), and track_filter.update_fcr() have all been
         called in the main loop.
         """
-        if self.state == self.SEARCH:
-            self._do_search()
-        elif self.state == self.ACQUIRE:
-            self._do_acquire()
-        elif self.state == self.TRACK:
-            self._do_track()
-        elif self.state == self.PREDICT:
-            self._do_predict()
-        elif self.state == self.AIMING:
+        if self.state == self.IDLE:
+            self._do_idle()
+        elif self.state == self.AIM:
             self._do_aim()
+        elif self.state == self.TRACK_PREDICT:
+            self._do_track_predict()
         elif self.state == self.ENGAGING:
             self._do_engage()
         elif self.state == self.RESET:
@@ -184,59 +184,39 @@ class AtlasFSM:
 
     @property
     def commanded_aim(self) -> tuple[float, float]:
-        """Return the turret aim last commanded to the motors as ``(pan, tilt)``.
+        """Return the (pan, tilt) angles last commanded to the motors, in radians.
 
-        Both angles are in radians, Z-up ENU (pan = azimuth, tilt = elevation).
-        The values are whatever ``_aim_at`` (or the SEARCH pan sweep) last sent
-        to the motors; before any command is issued they are ``(0.0, 0.0)``.
+        Z-up ENU (pan = azimuth, tilt = elevation), with the pan seam unwrapped.
+        Before any command is issued it is ``(0.0, 0.0)``.
 
-        The controller reads this each sense phase to feed the FCR its
-        boresight: ``fcr.update(*fsm.commanded_aim)``. A one-step lag is
-        acceptable — the motor is mid-slew anyway.
+        This is the FSM's *intent*, not the turret's measured aim. The FCR gates
+        its lock on the turret's real angle from the PAN/TILT position sensors
+        (see atlas_controller), so it only locks once the turret has physically
+        slewed onto the target. This property is kept for telemetry/introspection.
         """
         return (self._commanded_pan, self._commanded_tilt)
 
     # --------------------------------------------------------- state handlers
 
-    def _do_search(self) -> None:
-        """Execute one timestep of SEARCH state logic.
+    def _do_idle(self) -> None:
+        """Execute one timestep of IDLE state logic.
 
-        Pan sweep: oscillates the pan motor between -search_pan_limit and
-        +search_pan_limit, advancing search_speed radians per step and
-        reversing direction when a limit is reached.
+        Holds the turret at the fixed (idle_pan, idle_tilt) beam direction —
+        there is no pan sweep. Simultaneously reads the latest Search Radar cue
+        from the cue link and counts consecutive steps that carry a non-None
+        cue. Any step with no cue resets the counter to zero. When the count
+        reaches acquire_frames the cue (a world-frame [x, y, z] position) is
+        stored as self._target and the FSM transitions to AIM.
 
-        Simultaneously reads the latest Search Radar cue from the cue link and
-        counts consecutive steps that carry a non-None cue. Any step with no
-        cue resets the counter to zero. When the count reaches acquire_frames
-        the cue (a world-frame [x, y, z] position) is stored as self._target
-        and the FSM transitions to ACQUIRE.
+        A ground-hit cue takes precedence and sends the FSM to RESET.
         """
-        # --- pan sweep ---
-        self._pan_angle += self._pan_direction * self.config.search_speed
-        limit = self.config.search_pan_limit
+        if self.sensors.ground_hit_link.hit_this_step():
+            self._transition(self.RESET)
+            return
 
-        # Clamp to limit and reverse direction for the next step
-        if self._pan_angle >= limit:
-            self._pan_angle = limit
-            self._pan_direction = -1
-        elif self._pan_angle <= -limit:
-            self._pan_angle = -limit
-            self._pan_direction = 1
+        # Hold the fixed idle direction.
+        self._command_angles(self.config.idle_pan, self.config.idle_tilt)
 
-        self.hardware.pan_motor.setPosition(self._pan_angle)
-        # Keep the unwrap reference current so the first ACQUIRE aim unwraps
-        # relative to where the sweep actually left the pan motor. Also keep
-        # _commanded_pan current so commanded_aim reflects the live sweep.
-        self._last_pan_cmd = self._pan_angle
-        self._commanded_pan = self._pan_angle
-        _motor_log.debug(
-            "[SEARCH sweep] pan_motor.setPosition(%.4f rad)  dir=%+d  limit=%.4f",
-            self._pan_angle,
-            self._pan_direction,
-            limit,
-        )
-
-        # --- cue counting ---
         cue = self.sensors.cue_link.get_cue()
         if cue is not None:
             self._detection_count += 1
@@ -244,156 +224,119 @@ class AtlasFSM:
             self._detection_count = 0
 
         if self._detection_count >= self.config.acquire_frames:
-            # Store the world-frame cue; _world_to_relative converts it to turret-relative each ACQUIRE step.
+            # Store the world-frame cue; _world_to_relative converts it to
+            # turret-relative each AIM step.
             self._target = cue
-            self._transition(self.ACQUIRE)
+            self._transition(self.AIM)
 
-    def _do_acquire(self) -> None:
-        """Execute one timestep of ACQUIRE state logic.
+    def _do_aim(self) -> None:
+        """Execute one timestep of AIM state logic.
 
-        Entry (first call only): resets the TrackFilter. This fires exactly
-        once, guarded by ``_acquire_entry_done``.
+        Entry (first call only): resets the TrackFilter so the new engagement
+        starts from a clean estimate. Guarded by ``_aim_entry_done``.
 
-        Each step: reads the latest Search Radar cue from the cue link, converts
-        the world-frame cue to a turret-relative bearing, and slews the turret
-        motors toward it via ``_aim_at``. The real motors slew at maxVelocity,
-        so the turret converges over several steps. If the cue link is briefly
-        silent (``get_cue()`` returns None) the FSM holds its last aim and does
-        not error.
+        Each step: reads the latest Search Radar cue, converts the world-frame
+        cue to a turret-relative bearing, and slews the motors toward it via
+        ``_aim_at`` — aiming off the raw cue only, since the fused estimate is
+        not yet trustworthy. If the cue link is briefly silent the FSM holds its
+        last aim and does not error.
 
-        Transitions to TRACK when ``fcr.is_locked()`` AND
-        ``track_filter.is_initialised()`` are both True — the FCR has the
-        target inside its narrow FOV cone and the Kalman filter has a usable
-        estimate.
-
-        Note: the older ADR-0006 clause about a ``set_target`` call at ACQUIRE
-        is superseded by the cue-handoff rework — the FCR is cued at
-        construction and the Search Radar is a separate process reached only
-        through the cue link. The ADRs are reconciled in a later task.
+        Transitions to TRACK_PREDICT when ``fcr.is_locked()`` — the FCR has the
+        target inside its narrow FOV cone (the design's "FCR beam finds the
+        target"). A ground-hit cue takes precedence and sends the FSM to RESET.
         """
-        if not self._acquire_entry_done:
+        if self.sensors.ground_hit_link.hit_this_step():
+            self._transition(self.RESET)
+            return
+
+        if not self._aim_entry_done:
             self.sensors.track_filter.reset()
-            self._acquire_entry_done = True
+            self._aim_entry_done = True
 
         cue = self.sensors.cue_link.get_cue()
         if cue is not None:
             self._aim_at(self._world_to_relative(cue))
 
-        if self.sensors.fcr.is_locked() and self.sensors.track_filter.is_initialised():
-            self._transition(self.TRACK)
+        if self.sensors.fcr.is_locked():
+            self._transition(self.TRACK_PREDICT)
 
-    def _do_track(self) -> None:
-        """Execute one timestep of TRACK state logic.
+    def _do_track_predict(self) -> None:
+        """Execute one timestep of TRACK_PREDICT state logic.
 
-        Reads the current filtered target position from the TrackFilter, commands
-        both motors to aim at it, and increments the frame counter. When the
-        counter reaches config.min_track_frames the FSM transitions to PREDICT.
+        Dual-sensor fusion + prediction, merging the old TRACK, PREDICT and
+        AIMING states:
 
-        Position is relative [dx, dy, dz] from the turret origin (metres, Z-up ENU).
-        Motor angles are computed via _compute_aim_angles().
+          1. Fuse the latest Search Radar cue into the TrackFilter
+             (``update_search``). The FCR is fused continuously by the main
+             loop; fusing the Search Radar here is what makes this genuine
+             dual-sensor fusion (see ADR-0003).
+          2. Aim the turret at the current filtered position.
+          3. Compute the ballistic intercept lookahead_steps ahead and push it
+             onto a rolling history. Once the history is full, _pred_history[0]
+             is the intercept predicted lookahead_steps ago FOR the current
+             step; the prediction error is its distance from the current
+             filtered position. When that error stays below
+             track_error_threshold for converge_frames consecutive steps AND the
+             intercept is within max_range, the prediction is trustworthy: store
+             it on self._intercept and transition to ENGAGING.
+
+        A ground-hit cue takes precedence and sends the FSM to RESET.
         """
+        if self.sensors.ground_hit_link.hit_this_step():
+            self._transition(self.RESET)
+            return
+
+        # 1. Fuse the Search Radar cue (FCR is fused continuously by the loop).
+        cue = self.sensors.cue_link.get_cue()
+        if cue is not None:
+            self.sensors.track_filter.update_search(self._world_to_relative(cue))
+
+        # 2. Aim at the current filtered estimate.
         position = self.sensors.track_filter.get_position()
         self._aim_at(position)
 
-        self._track_frames += 1
-        if self._track_frames >= self.config.min_track_frames:
-            self._transition(self.PREDICT)
-
-    def _do_predict(self) -> None:
-        """Execute one timestep of PREDICT state logic.
-
-        Computes a ballistic intercept point for config.lookahead_steps ahead
-        and validates it. If the intercept is within max_range, stores it on
-        self._intercept and transitions to AIMING. If it is out of range,
-        transitions back to TRACK to continue refining the estimate before
-        retrying. There is no below-ground guard: ground reasoning lives only
-        in the attacker's emitted cue (see the 2026-05-21 spec).
-
-        The intercept is stored as relative [dx, dy, dz] (metres, Z-up ENU)
-        from the turret origin, ready for AIMING to consume.
-        """
+        # 3. Predict and test convergence of predicted-vs-observed error.
         intercept = self.sensors.ballistic_predictor.get_intercept(
             self.config.lookahead_steps
         )
-        if self._target_within_range(intercept):
-            self._intercept = intercept
-            self._transition(self.AIMING)
+        pred_error = self._record_intercept_and_error(intercept, position)
+
+        if (
+            pred_error is not None
+            and pred_error < self.config.track_error_threshold
+            and self._target_within_range(intercept)
+        ):
+            self._converge_count += 1
         else:
-            self._transition(self.TRACK)
+            self._converge_count = 0
 
-    def _do_aim(self) -> None:
-        """Execute one timestep of AIMING state logic.
-
-        Slews both motors toward the stored intercept point (self._intercept, relative
-        [dx, dy, dz] from the turret origin, set by PREDICT). The aim error is measured
-        as the Euclidean angular distance between the desired angles (from the intercept)
-        and the angles most-recently commanded to the motors (_commanded_pan,
-        _commanded_tilt). The error is evaluated BEFORE issuing new commands so that
-        the first AIMING step — where the motors are still at whatever TRACK left them —
-        has a nonzero error and the FSM stays in AIMING. After the motors are commanded
-        the stored commanded angles are updated; on the next step the error is zero
-        (desired == newly commanded), which is below any positive threshold, and the FSM
-        transitions to ENGAGING.
-
-        Aim-error design rationale
-        --------------------------
-        Webots RotationalMotor has no position readback without an attached
-        PositionSensor. Adding a sensor purely for AIMING would leak hardware
-        concerns into tests and complicate the controller. Instead, the FSM tracks
-        the last angle it sent to each motor (_commanded_pan, _commanded_tilt). This
-        is an internally-consistent measure of "how far the turret still needs to
-        slew" — it is zero the step after the desired angles are first commanded,
-        which is the earliest the motors could realistically be pointing at the
-        target. This is a deliberate simplification: the real mechanical slew
-        latency is ignored, which is acceptable for the scope of Task 8. A concern
-        is noted: if the simulation timestep is large relative to the motor slew
-        speed, this may fire ENGAGING prematurely. Consider adding a configurable
-        dwell count in a future task if needed.
-
-        Transitions to ENGAGING when aim error < config.aim_error_threshold (radians).
-
-        Precondition: self._intercept is not None (set by PREDICT before entering AIMING).
-        """
-        desired_pan, desired_tilt = self._compute_aim_angles(self._intercept)
-
-        # Measure error against PREVIOUS commanded angles (before this step's command)
-        error = math.sqrt(
-            (desired_pan - self._commanded_pan) ** 2
-            + (desired_tilt - self._commanded_tilt) ** 2
-        )
-
-        # Command motors. _aim_at records the angles it sent on
-        # _commanded_pan / _commanded_tilt, so the next step's error is
-        # measured against this step's command.
-        self._aim_at(self._intercept)
-
-        if error < self.config.aim_error_threshold:
+        if self._converge_count >= self.config.converge_frames:
+            self._intercept = intercept
             self._transition(self.ENGAGING)
 
     def _do_engage(self) -> None:
         """Execute one timestep of ENGAGING state logic.
 
-        Activates the laser (self.laser_active = True) and holds aim on the stored
-        intercept point by re-commanding both motors each step. Reads the current
-        target position from sensors.track_filter.get_position() and checks the
-        range envelope via _target_within_range(). Transitions to RESET when the
-        attacker's ground-hit cue fires this step (sensors.ground_hit_link) or
-        the target goes beyond max_range. The ground hit is never inferred from
-        the track Z — the emitted cue is the only ground-hit signal.
+        Holds aim on the fixed intercept (self._intercept, set at the
+        TRACK_PREDICT → ENGAGING transition) by re-commanding both motors each
+        step. No further predictions happen here. Entering ENGAGING is itself
+        the "ready to fire" signal — there is no separate flag.
 
-        self.laser_active is readable by the controller (Task 9) to drive the
-        actual laser hardware.
+        Transitions to RESET when the attacker's ground-hit cue fires this step
+        (sensors.ground_hit_link) or the target leaves max_range. The ground hit
+        is never inferred from the track Z — the emitted cue is the only
+        ground-hit signal.
 
-        Precondition: self._intercept is not None (set by PREDICT, unchanged since AIMING).
+        Precondition: self._intercept is not None (set by TRACK_PREDICT).
         """
-        self.laser_active = True
-
-        # Hold aim on the fixed intercept
+        # Hold aim on the fixed intercept.
         self._aim_at(self._intercept)
 
         # Exit on the authoritative ground-hit cue from the attacker, or when the
         # target leaves the range envelope. Ground hits are NEVER inferred from
         # the track Z here — the emitted cue is the only ground-hit signal.
+        # TODO(projectile-destroyed-cue): when the turret-weapon / bullet-hit cue
+        # is built, add a "projectile destroyed → RESET" exit here.
         target_position = self.sensors.track_filter.get_position()
         if self.sensors.ground_hit_link.hit_this_step() or not self._target_within_range(
             target_position
@@ -403,33 +346,59 @@ class AtlasFSM:
     def _do_reset(self) -> None:
         """Execute one timestep of RESET state logic.
 
-        Clears all engagement and tracking bookkeeping accumulated since SEARCH,
-        then transitions to SEARCH so the turret begins a fresh scan cycle.
+        Wipes the Kalman filter memory and all engagement/tracking bookkeeping
+        accumulated since IDLE, then transitions to IDLE so the turret begins a
+        fresh cycle.
 
-        What this handler clears explicitly (not covered by _transition(SEARCH)):
-          - laser_active       → False  (engagement flag)
-          - _target            → None   (selected detection node)
-          - _intercept         → None   (PREDICT output; normally cleared on TRACK
-                                         entry by _transition, but cleared here too
-                                         for clarity since RESET always bypasses TRACK)
-          - _track_frames      → 0      (_transition(SEARCH) does not reset this;
-                                         it is reset by _transition(TRACK), which is
-                                         not visited during a RESET→SEARCH path)
-          - _acquire_entry_done → False (_transition(ACQUIRE) would reset this, but
-                                         RESET→SEARCH skips ACQUIRE, so the guard must
-                                         be explicitly cleared here for the next cycle)
+        What this handler clears explicitly (beyond _transition(IDLE)):
+          - track_filter.reset()  → wipes the Kalman estimate (per the redesign)
+          - cue_link.clear()      → discards the previous engagement's Search Radar
+                                    cue. The cue link has no expiry, so without this
+                                    the stale cue would immediately re-trigger
+                                    IDLE → AIM even though no fresh cue has arrived.
+          - _target               → None
+          - _intercept            → None
+          - _aim_entry_done       → False (RESET→IDLE skips AIM, so the entry
+                                    guard must be cleared here for the next cycle)
+          - _converge_count       → 0
+          - _pred_history         → cleared
 
-        _transition(SEARCH) covers: _detection_count, _pan_direction, _pan_angle.
-        No logic is duplicated between this handler and _transition().
+        _transition(IDLE) covers: _detection_count.
         """
-        self.laser_active = False
+        self.sensors.track_filter.reset()
+        self.sensors.cue_link.clear()
         self._target = None
         self._intercept = None
-        self._track_frames = 0
-        self._acquire_entry_done = False
-        self._transition(self.SEARCH)
+        self._aim_entry_done = False
+        self._converge_count = 0
+        self._pred_history.clear()
+        self._transition(self.IDLE)
 
     # ---------------------------------------------------------------- helpers
+
+    def _record_intercept_and_error(self, intercept, current_position):
+        """Append this step's intercept and return the prediction error for the
+        intercept that targeted *this* step, or None while warming up.
+
+        Pure bookkeeping over the rolling history. When the history is full,
+        _pred_history[0] is the intercept predicted lookahead_steps ago FOR the
+        current step; its distance from current_position is how accurate that
+        prediction turned out to be. Mirrors
+        telemetry.TrackTelemetry.record_intercept_and_error.
+
+        Args:
+            intercept:        This step's predicted intercept [dx, dy, dz].
+            current_position: The current filtered position [dx, dy, dz].
+
+        Returns:
+            Euclidean prediction error (metres), or None if not enough history.
+        """
+        full = len(self._pred_history) == self._pred_history.maxlen
+        oldest = self._pred_history[0] if full else None
+        self._pred_history.append(intercept)
+        if oldest is not None:
+            return math.dist(oldest, current_position)
+        return None
 
     def _aim_at(self, rel_position: list[float]) -> tuple[float, float]:
         """Command both motors to point at a relative position and return the angles.
@@ -445,47 +414,60 @@ class AtlasFSM:
             (pan_angle, tilt_angle) in radians — the angles sent to the motors this step.
         """
         pan, tilt = self._compute_aim_angles(rel_position)
+        return self._command_angles(pan, tilt, rel_position=rel_position)
 
-        # pan from atan2 is in [-pi, pi] and is DISCONTINUOUS across the +/-pi
-        # seam: a target behind the turret makes pan flip between +pi and -pi as
-        # dx jitters around zero. Both are the same heading, but commanded as
-        # absolute motor positions they are ~2*pi apart, so the motor whips a
-        # near-full revolution every step (the "twitchy" turret). Unwrapping the
-        # raw angle to the equivalent nearest the last command keeps every
-        # commanded step <= pi, so the motor always takes the short way round.
+    def _command_angles(
+        self, pan: float, tilt: float, rel_position=None
+    ) -> tuple[float, float]:
+        """Issue pan/tilt setPosition() commands, unwrapping the pan seam.
+
+        pan from atan2 is in [-pi, pi] and is DISCONTINUOUS across the +/-pi
+        seam: a target behind the turret makes pan flip between +pi and -pi as
+        dx jitters around zero. Both are the same heading, but commanded as
+        absolute motor positions they are ~2*pi apart, so the motor whips a
+        near-full revolution every step (the "twitchy" turret). Unwrapping the
+        raw angle to the equivalent nearest the last command keeps every
+        commanded step <= pi, so the motor always takes the short way round.
+
+        Args:
+            pan:          Desired pan angle (radians, may be the raw atan2 value).
+            tilt:         Desired tilt angle (radians).
+            rel_position: Optional [dx, dy, dz] for the debug log line.
+
+        Returns:
+            (pan_angle, tilt_angle) actually commanded, in radians.
+        """
         raw_pan = pan
-        pan = self._unwrap_pan(raw_pan, self._last_pan_cmd)
-        self._last_pan_cmd = pan
+        target_pan = self._unwrap_pan(raw_pan, self._last_pan_cmd)
+        self._last_pan_cmd = target_pan
 
-        self.hardware.pan_motor.setPosition(pan)
+        # Tell the motors where to end up. Webots slews them there at their
+        # maxVelocity over several steps.
+        self.hardware.pan_motor.setPosition(target_pan)
         self.hardware.tilt_motor.setPosition(tilt)
-        # Record what was actually commanded so commanded_aim can feed the FCR
-        # its boresight and so _do_aim can measure convergence.
-        self._commanded_pan = pan
+        self._commanded_pan = target_pan
         self._commanded_tilt = tilt
         _motor_log.debug(
-            "[%s aim] target_rel=[%.3f, %.3f, %.3f] -> "
+            "[%s aim] target_rel=%s -> "
             "pan_motor.setPosition(%.4f rad)  tilt_motor.setPosition(%.4f rad)  "
-            "(raw_pan=%.4f, unwrapped by %+.4f)",
+            "(raw_pan=%.4f)",
             self.state,
-            rel_position[0],
-            rel_position[1],
-            rel_position[2],
-            pan,
+            rel_position,
+            target_pan,
             tilt,
             raw_pan,
-            pan - raw_pan,
         )
-        return pan, tilt
+        return target_pan, tilt
 
     @staticmethod
     def _unwrap_pan(new_angle: float, prev_angle: float) -> float:
         """Return the rotation equivalent to new_angle that is nearest prev_angle.
 
         Shifts new_angle by whole turns so it lands within +/-pi of prev_angle.
-        This removes the +/-pi discontinuity of atan2 (see _aim_at): without it
-        the pan motor is told to spin ~360 degrees back and forth whenever the
-        target sits roughly behind the turret, producing visible twitching.
+        This removes the +/-pi discontinuity of atan2 (see _command_angles):
+        without it the pan motor is told to spin ~360 degrees back and forth
+        whenever the target sits roughly behind the turret, producing visible
+        twitching.
 
         math.remainder(x, tau) reduces x into [-pi, pi], so applying it to the
         delta gives the shortest signed step from prev_angle to new_angle; adding
@@ -545,8 +527,7 @@ class AtlasFSM:
         In range means the Euclidean distance from the turret is
         ≤ config.max_range (metres). Ground reasoning deliberately lives
         nowhere in the FSM: a ground hit is signalled only by the attacker's
-        emitted cue (sensors.ground_hit_link), never inferred from Z. See the
-        2026-05-21 attacker-ground-hit-cue spec.
+        emitted cue (sensors.ground_hit_link), never inferred from Z.
 
         Args:
             rel_position: Relative [dx, dy, dz] from turret origin (metres).
@@ -562,18 +543,17 @@ class AtlasFSM:
         """Log and execute a state transition, resetting per-state bookkeeping.
 
         Args:
-            new_state: One of the AtlasFSM state constants (SEARCH, ACQUIRE, …).
+            new_state: One of the AtlasFSM state constants (IDLE, AIM, …).
         """
         _log.info("%s -> %s", self.state, new_state)
         self.state = new_state
 
         # Reset bookkeeping for the state we are ENTERING
-        if new_state == self.SEARCH:
+        if new_state == self.IDLE:
             self._detection_count = 0
-            self._pan_direction = 1
-            self._pan_angle = 0.0
-        elif new_state == self.ACQUIRE:
-            self._acquire_entry_done = False
-        elif new_state == self.TRACK:
-            self._track_frames = 0
+        elif new_state == self.AIM:
+            self._aim_entry_done = False
+        elif new_state == self.TRACK_PREDICT:
             self._intercept = None
+            self._converge_count = 0
+            self._pred_history.clear()

@@ -98,3 +98,30 @@ def test_get_cue_returns_list_not_tuple():
     link.update()
     result = link.get_cue()
     assert isinstance(result, list)
+
+
+def test_clear_discards_stored_cue():
+    """clear() must drop the stored cue so get_cue() returns None again."""
+    receiver = StubReceiver([(1.0, 2.0, 3.0)])
+    link = SearchRadarLink(receiver)
+    link.update()
+    assert link.get_cue() is not None
+    link.clear()
+    assert link.get_cue() is None
+
+
+def test_clear_then_update_repopulates_only_with_fresh_packet():
+    """After clear(), get_cue() stays None until a genuinely new packet arrives."""
+    receiver = StubReceiver([(1.0, 2.0, 3.0)])
+    link = SearchRadarLink(receiver)
+    link.update()
+    link.clear()
+
+    # No new packets in the (now empty) queue → cue stays None.
+    link.update()
+    assert link.get_cue() is None
+
+    # A fresh packet arrives → cue repopulates.
+    receiver._queue.append(struct.pack("ddd", 4.0, 5.0, 6.0))
+    link.update()
+    assert link.get_cue() == pytest.approx([4.0, 5.0, 6.0])

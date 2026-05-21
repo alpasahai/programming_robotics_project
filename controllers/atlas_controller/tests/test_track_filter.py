@@ -58,6 +58,13 @@ def test_is_initialised_true_after_update_fcr():
     assert tf.is_initialised() is True
 
 
+def test_is_initialised_true_after_update_search():
+    """update_search() must flip is_initialised() to True."""
+    tf = make_filter()
+    tf.update_search([1.0, 2.0, 3.0])
+    assert tf.is_initialised() is True
+
+
 # ---------------------------------------------------------------------------
 # Slice 4: reset() clears the initialised flag
 # ---------------------------------------------------------------------------
@@ -193,6 +200,24 @@ def test_update_fcr_applies_low_R():
     tf.update_fcr([1.0, 2.0, 3.0])
     expected_R = np.eye(3) * R_FCR
     np.testing.assert_array_almost_equal(tf.kf.R, expected_R)
+
+
+def test_update_search_applies_high_R():
+    """After update_search(), kf.R diagonal must equal R_search (high noise)."""
+    tf = make_filter()
+    tf.update_search([1.0, 2.0, 3.0])
+    expected_R = np.eye(3) * R_SEARCH
+    np.testing.assert_array_almost_equal(tf.kf.R, expected_R)
+
+
+def test_update_search_moves_estimate_toward_measurement():
+    """update_search() must pull the position estimate toward the measurement."""
+    tf = make_filter()
+    tf.update_search([4.0, 5.0, 6.0])
+    pos = tf.get_position()
+    # From a zeroed state with large initial covariance, a single measurement
+    # pulls the estimate most of the way toward it.
+    assert pos[0] > 0.0 and pos[1] > 0.0 and pos[2] > 0.0
 
 
 # ---------------------------------------------------------------------------

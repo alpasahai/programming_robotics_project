@@ -4,4 +4,5 @@ worlds/.*.jpg
 .claude/
 .venv/
 *.log
+logs.txt
 runtime.ini
