@@ -43,16 +43,10 @@ SEARCH_RADAR_BEAM_WIDTH_RAD = 0.35
 SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.32
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20
 SEARCH_RADAR_NOISE_STD_M = 0.2
-SEARCH_RADAR_ROTATING_ENDPOINT_Z_M = 1.0
-SEARCH_RADAR_BEAM_LOCAL_Z_M = 1.1
-# SearchRadar.proto places the rotating endpoint Solid at z=1.0 and the FOV
-# Pose / radar head at local z=1.1 inside that endpoint, so the sensor phase
-# centre is 2.1m above the Robot origin.
-SEARCH_RADAR_PHASE_CENTER_OFFSET_M = [
-    0.0,
-    0.0,
-    SEARCH_RADAR_ROTATING_ENDPOINT_Z_M + SEARCH_RADAR_BEAM_LOCAL_Z_M,
-]
+# The radar's mounting geometry (pole / endpoint / beam height) lives solely in
+# SearchRadar.proto. The controller derives the phase centre by reading the
+# rendered SR_FOV_BEAM node instead of duplicating those z offsets here — change
+# the beam height in the proto (fovBeamTranslation z) and the controller follows.
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -120,18 +114,20 @@ if turret_node is None:
 
 radar_node = robot.getSelf()
 
+# The rendered FOV beam node is the single source of truth for the radar's beam
+# pose. Fetched once here and reused for seeding the phase centre, syncing the
+# visible cone, and the per-step alignment in the main loop.
+fov_beam_node = radar_node.getFromProtoDef("SR_FOV_BEAM")
+fov_cone_node = radar_node.getFromProtoDef("SR_FOV_CONE")
+
 # Static snapshots — neither the turret nor the radar body translates.
 turret_position = list(turret_node.getPosition())
 radar_origin_position = list(radar_node.getPosition())
-radar_position = [
-    radar_origin_position[i] + SEARCH_RADAR_PHASE_CENTER_OFFSET_M[i] for i in range(3)
-]
 
 log.info("turret_position (world) = %s", [round(v, 3) for v in turret_position])
 log.info(
     "radar_origin_position (world) = %s", [round(v, 3) for v in radar_origin_position]
 )
-log.info("radar_phase_center    (world) = %s", [round(v, 3) for v in radar_position])
 
 
 def _joint_angle_to_search_azimuth(joint_angle: float) -> float:
@@ -159,6 +155,20 @@ def _visual_beam_pose_to_search_frame(beam_node, beam_range: float):
     return origin, azimuth, direction
 
 
+# Seed the phase centre (cone apex) by reading the rendered beam node — the same
+# derivation the main loop applies every step. This initial value is overwritten
+# on the first loop iteration before any detection runs, so it only covers the
+# pre-first-step window and the log below; the proto geometry, not a constant,
+# determines it.
+if fov_beam_node is not None:
+    radar_position, _, _ = _visual_beam_pose_to_search_frame(
+        fov_beam_node, SEARCH_RADAR_MAX_RANGE_M
+    )
+else:
+    radar_position = list(radar_origin_position)  # degraded: no beam visual present
+log.info("radar_phase_center    (world) = %s", [round(v, 3) for v in radar_position])
+
+
 # ---------------------------------------------------------------------------
 # SearchRadar — parameter values copied verbatim from atlas_controller.py
 # (Increment 1 constructor call, lines 100-111).
@@ -182,8 +192,6 @@ search_radar = SearchRadar(
 # ---------------------------------------------------------------------------
 
 
-fov_beam_node = radar_node.getFromProtoDef("SR_FOV_BEAM")
-fov_cone_node = radar_node.getFromProtoDef("SR_FOV_CONE")
 if fov_beam_node is None or fov_cone_node is None:
     log.warning(
         "Search Radar FOV visual nodes not found via getFromProtoDef; "
@@ -191,13 +199,16 @@ if fov_beam_node is None or fov_cone_node is None:
     )
 else:
     beam_spec = search_radar.get_beam_visual_spec()
-    # Write the exposed PROTO parameters on the radar instance, not the internal
-    # SR_FOV_* nodes — internal PROTO fields are read-only via the supervisor API.
+    # Set only the spec-derived cone centre (x/y) and dimensions on the exposed
+    # PROTO params. Preserve the proto's mount height (z) — the beam height lives
+    # in SearchRadar.proto's fovBeamTranslation, not here, so changing it there
+    # is honoured rather than overwritten.
+    mount_z = radar_node.getField("fovBeamTranslation").getSFVec3f()[2]
     radar_node.getField("fovBeamTranslation").setSFVec3f(
         [
             beam_spec.cone_center_local[0],
             beam_spec.cone_center_local[1],
-            SEARCH_RADAR_BEAM_LOCAL_Z_M + beam_spec.cone_center_local[2],
+            mount_z + beam_spec.cone_center_local[2],
         ]
     )
     radar_node.getField("fovConeHeight").setSFFloat(beam_spec.cone_height)
@@ -208,7 +219,7 @@ else:
         "origin_world=%s centre_azimuth=%.3frad range=%.2fm "
         "beam_width=%.3frad vertical_fov=%.3frad half_angle=%.3frad "
         "cone_height=%.3fm cone_radius=%.3fm "
-        "local_center=%s phase_center_offset=%s",
+        "local_center=%s mount_z=%.3fm",
         [round(v, 3) for v in beam_spec.origin_world],
         beam_spec.centre_azimuth,
         beam_spec.max_range,
@@ -218,7 +229,7 @@ else:
         beam_spec.cone_height,
         beam_spec.cone_radius,
         [round(v, 3) for v in beam_spec.cone_center_local],
-        [round(v, 3) for v in SEARCH_RADAR_PHASE_CENTER_OFFSET_M],
+        mount_z,
     )
 
 # ---------------------------------------------------------------------------
