@@ -25,8 +25,8 @@ import os
 # Keys are the logger names passed to configure(); values are level names.
 # ---------------------------------------------------------------------------
 LOG_LEVELS = {
-    "AttackerController": "DEBUG",
-    "AtlasController": "DEBUG",
+    "AttackerController": "INFO",
+    "AtlasController": "INFO",
     "SearchRadarController": "INFO",
 }
 DEFAULT_LEVEL = "INFO"
