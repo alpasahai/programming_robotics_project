@@ -14,12 +14,12 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   4. Decide  — fsm.step()
 """
 
-import logging
 import math
 from collections import deque
 
 from controller import Supervisor
 
+from atlas_logging import configure
 from fire_control_radar import FireControlRadar
 from search_radar_link import SearchRadarLink
 from track_filter import TrackFilter
@@ -29,23 +29,14 @@ from fsm import AtlasFSM, SensorSuite, TurretHardware
 # ---------------------------------------------------------------------------
 # Telemetry logging
 #
-# logging works in Webots: a StreamHandler lands in the Webots console, a
-# FileHandler writes a reviewable trace to controllers/atlas_controller/.
-# Set TELEMETRY_LEVEL to logging.INFO for transitions-only, logging.DEBUG for
-# full per-step telemetry.
+# A StreamHandler lands in the Webots console; a FileHandler writes a reviewable
+# trace to controllers/atlas_controller/. The console level is set centrally in
+# lib/atlas_logging.py (LOG_LEVELS["AtlasController"]) so verbosity for every
+# controller lives in one place; override per run with ATLASCONTROLLER_LOG_LEVEL
+# or ATLAS_LOG_LEVEL.
 # ---------------------------------------------------------------------------
 
-TELEMETRY_LEVEL = logging.DEBUG
-
-logging.basicConfig(
-    level=TELEMETRY_LEVEL,
-    format="[%(levelname)s - %(name)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(),  # Webots console
-        logging.FileHandler("atlas_telemetry.log", mode="w", encoding="utf-8"),
-    ],
-)
-log = logging.getLogger("Controller")
+log = configure("AtlasController", log_file="atlas_telemetry.log")
 
 
 def _distance(a, b):

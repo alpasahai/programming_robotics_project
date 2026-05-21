@@ -26,12 +26,12 @@ DEF names (confirmed from worlds/ATLA_v1.wbt)
                  defined by SearchRadar.proto)
 """
 
-import logging
 import math
 import struct
 
 from controller import Supervisor
 
+from atlas_logging import configure
 from search_radar import SearchRadar
 
 # Search Radar sensor and visualisation parameters. Keep these constants as the
@@ -56,21 +56,13 @@ SEARCH_RADAR_PHASE_CENTER_OFFSET_M = [
 # ---------------------------------------------------------------------------
 # Telemetry logging
 #
-# Same structure as atlas_controller.py: Webots console via StreamHandler and a
-# controller-local file trace for review after a run.
+# Webots console via StreamHandler and a controller-local file trace for review
+# after a run. The console level is set centrally in lib/atlas_logging.py
+# (LOG_LEVELS["SearchRadarController"]); override per run with
+# SEARCHRADARCONTROLLER_LOG_LEVEL or ATLAS_LOG_LEVEL.
 # ---------------------------------------------------------------------------
 
-TELEMETRY_LEVEL = logging.DEBUG
-
-logging.basicConfig(
-    level=TELEMETRY_LEVEL,
-    format="[%(levelname)s - %(name)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("search_radar_telemetry.log", mode="w", encoding="utf-8"),
-    ],
-)
-log = logging.getLogger("SearchRadarController")
+log = configure("SearchRadarController", log_file="search_radar_telemetry.log")
 
 # ---------------------------------------------------------------------------
 # Bootstrap

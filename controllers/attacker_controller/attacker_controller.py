@@ -15,17 +15,12 @@ The projectile itself is a passive Solid (DEF PROJECTILE); the attacker drives
 it via the supervisor API and getFromDef, never via a node handle on itself.
 """
 
-import logging
-
 from controller import Supervisor
 
+from atlas_logging import configure
 from projectile import Projectile, ProjectileConfig
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s - %(name)s] %(message)s",
-)
-log = logging.getLogger("AttackerController")
+log = configure("AttackerController", log_file="attacker_telemetry.log")
 
 robot = Supervisor()
 timestep = int(robot.getBasicTimeStep())
@@ -36,7 +31,7 @@ if projectile_node is None:
 
 # Spawn parameters surfaced here at the controller level.
 config = ProjectileConfig(
-    spawn_position=[2.59591e-05, -2.53, 0.04984303999999999],
+    spawn_position=[0, -3, 0.5],
     launch_velocity=[0, 4, 6, 0, 0, 0],
     ground_hit_threshold_m=0.05,
     respawn_delay_ms=2000,
