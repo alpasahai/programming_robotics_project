@@ -35,6 +35,9 @@ def test_projectile_and_turret_protos_preserve_controller_contracts():
     assert "field SFBool supervisor TRUE" in turret_proto
     assert 'name "PAN_MOTOR"' in turret_proto
     assert 'name "TILT_MOTOR"' in turret_proto
+    # Position sensors the controller reads for the turret's real aim (fed to the FCR).
+    assert 'name "PAN_SENSOR"' in turret_proto
+    assert 'name "TILT_SENSOR"' in turret_proto
 
 
 def test_search_radar_proto_preserves_runtime_fov_contracts():

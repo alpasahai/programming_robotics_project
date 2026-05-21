@@ -28,9 +28,10 @@ PROTO AtlasTurret [
         device [
           RotationalMotor {
             name "PAN_MOTOR"
-            # Slew rate. Must match FSMConfig.slew_rate so the FSM's aim
-            # estimate (which gates the FCR lock) tracks the real motor.
             maxVelocity 10
+          }
+          PositionSensor {
+            name "PAN_SENSOR"
           }
         ]
         endPoint Solid {
@@ -48,9 +49,10 @@ PROTO AtlasTurret [
                   # horizontal (0) to straight up (+pi/2).
                   minPosition -1.5708
                   maxPosition 1.5708
-                  # Slew rate. Must match FSMConfig.slew_rate so the FSM's aim
-                  # estimate (which gates the FCR lock) tracks the real motor.
                   maxVelocity 10
+                }
+                PositionSensor {
+                  name "TILT_SENSOR"
                 }
               ]
               endPoint Solid {

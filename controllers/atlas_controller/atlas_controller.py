@@ -33,6 +33,8 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   5. Report  — telemetry.report() (development instrument; no effect on control)
 """
 
+import math
+
 from controller import Supervisor
 
 from atlas_logging import configure
@@ -86,6 +88,15 @@ timestep = int(robot.getBasicTimeStep())
 # --- Devices ---
 pan = robot.getDevice("PAN_MOTOR")
 tilt = robot.getDevice("TILT_MOTOR")
+
+# Position sensors on the pan/tilt joints. These report the turret's REAL aim
+# (the measured joint angle), which the FCR gates its lock on — so the FCR only
+# locks once the barrel has physically slewed onto the target, not the instant
+# the FSM commands the angle. Must be enabled before the loop reads them.
+pan_sensor = robot.getDevice("PAN_SENSOR")
+tilt_sensor = robot.getDevice("TILT_SENSOR")
+pan_sensor.enable(timestep)
+tilt_sensor.enable(timestep)
 
 # Receiver for Search Radar cues delivered over the inter-process radio link.
 # Must be enabled before constructing SearchRadarLink.
@@ -180,8 +191,11 @@ while robot.step(timestep) != -1:
     step_count += 1
 
     # 1. Sense [sim-clock cadence] — drain the cue link and update the FCR with
-    #    the turret's current aim. The FCR gates detection against the boresight,
-    #    so it must be fed the aim angles the FSM last commanded.
+    #    the turret's REAL aim, read from the pan/tilt position sensors. The FCR
+    #    gates detection against this measured boresight, so it locks only once
+    #    the barrel has physically slewed onto the target — not when the FSM
+    #    merely commands the angle. getValue() can be NaN before the first step
+    #    settles; fall back to 0.0 in that case.
     cue_link.update()
     ground_hit_link.update()
     if ground_hit_link.hit_this_step():
@@ -190,7 +204,28 @@ while robot.step(timestep) != -1:
             ground_hit_link.count,
             robot.getTime(),
         )
-    fcr.update(*fsm.commanded_aim)
+    pan_actual = pan_sensor.getValue()
+    tilt_actual = tilt_sensor.getValue()
+    if math.isnan(pan_actual):
+        pan_actual = 0.0
+    if math.isnan(tilt_actual):
+        tilt_actual = 0.0
+    fcr.update(pan_actual, tilt_actual)
+
+    # Aim trace: real (measured) vs commanded angle. Reveals how far the motor
+    # is lagging the FSM's command — set AtlasController to DEBUG to see it.
+    cmd_pan, cmd_tilt = fsm.commanded_aim
+    log.debug(
+        "[AIM] state=%s  actual=(%.3f, %.3f)  commanded=(%.3f, %.3f)  "
+        "pan_err=%+.3f tilt_err=%+.3f rad",
+        fsm.state,
+        pan_actual,
+        tilt_actual,
+        cmd_pan,
+        cmd_tilt,
+        cmd_pan - pan_actual,
+        cmd_tilt - tilt_actual,
+    )
 
     # 2. Predict [sim-clock cadence] — propagate Kalman state forward one
     #    timestep. Runs every tick so the estimate stays warm even in states
