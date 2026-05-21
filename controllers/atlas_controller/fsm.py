@@ -201,7 +201,7 @@ class AtlasFSM:
         """
         return (self._commanded_pan, self._commanded_tilt)
 
-    def consume_fire_command(self):
+    def consume_fire_command(self) -> list[float] | None:
         """Return the pending fire command and clear it, or None if none pending.
 
         The fire command is the intercept point [dx, dy, dz] (turret-relative
