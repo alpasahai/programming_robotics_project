@@ -44,9 +44,7 @@ from enum import Enum, auto
 class ProjectileConfig:
     """Tunable parameters for the incoming projectile's spawn cycle."""
 
-    spawn_position: list = field(
-        default_factory=lambda: [2.59591e-05, -2.53, 0.04984303999999999]
-    )
+    spawn_position: list = field(default_factory=lambda: [0, -5, 0.5])
     # Where the ball is parked while despawned: far below the floor, out of
     # every sensor's range/FOV so it is effectively gone until respawned.
     despawn_position: list = field(default_factory=lambda: [0.0, 0.0, -100.0])

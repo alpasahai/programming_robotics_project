@@ -40,7 +40,7 @@ from search_radar import SearchRadar
 SEARCH_RADAR_MAX_RANGE_M = 20.0
 SEARCH_RADAR_VERTICAL_FOV_RAD = math.pi / 2
 SEARCH_RADAR_BEAM_WIDTH_RAD = 0.35
-SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.15
+SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.32
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20
 SEARCH_RADAR_NOISE_STD_M = 0.2
 SEARCH_RADAR_ROTATING_ENDPOINT_Z_M = 1.0
@@ -124,12 +124,13 @@ radar_node = robot.getSelf()
 turret_position = list(turret_node.getPosition())
 radar_origin_position = list(radar_node.getPosition())
 radar_position = [
-    radar_origin_position[i] + SEARCH_RADAR_PHASE_CENTER_OFFSET_M[i]
-    for i in range(3)
+    radar_origin_position[i] + SEARCH_RADAR_PHASE_CENTER_OFFSET_M[i] for i in range(3)
 ]
 
 log.info("turret_position (world) = %s", [round(v, 3) for v in turret_position])
-log.info("radar_origin_position (world) = %s", [round(v, 3) for v in radar_origin_position])
+log.info(
+    "radar_origin_position (world) = %s", [round(v, 3) for v in radar_origin_position]
+)
 log.info("radar_phase_center    (world) = %s", [round(v, 3) for v in radar_position])
 
 
@@ -153,10 +154,7 @@ def _visual_beam_pose_to_search_frame(beam_node, beam_range: float):
     orientation = beam_node.getOrientation()
     direction = [orientation[1], orientation[4], orientation[7]]
     center = beam_node.getPosition()
-    origin = [
-        center[i] - direction[i] * (beam_range / 2.0)
-        for i in range(3)
-    ]
+    origin = [center[i] - direction[i] * (beam_range / 2.0) for i in range(3)]
     azimuth = math.atan2(direction[0], direction[1]) % (2 * math.pi)
     return origin, azimuth, direction
 
@@ -167,7 +165,7 @@ def _visual_beam_pose_to_search_frame(beam_node, beam_range: float):
 # ---------------------------------------------------------------------------
 
 search_radar = SearchRadar(
-    [projectile_node],          # list of all projectile nodes in the scene
+    [projectile_node],  # list of all projectile nodes in the scene
     turret_position,
     radar_position,
     noise_std=SEARCH_RADAR_NOISE_STD_M,  # high noise — SearchRadar is coarse
@@ -380,4 +378,3 @@ while robot.step(timestep) != -1:
             wy,
             wz,
         )
-

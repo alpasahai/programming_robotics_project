@@ -18,6 +18,8 @@ Viewpoint {
   position 15.798019968556327 -22.410740704177947 14.250793711985825
 }
 Floor {
+  size 20 20
+  tileSize 1 1
   appearance Parquetry {
   }
 }
