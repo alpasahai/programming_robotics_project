@@ -8,6 +8,7 @@ WORLD_FILE = REPO_ROOT / "worlds" / "ATLA_v1.wbt"
 PROJECTILE_PROTO = REPO_ROOT / "protos" / "Projectile.proto"
 TURRET_PROTO = REPO_ROOT / "protos" / "AtlasTurret.proto"
 SEARCH_RADAR_PROTO = REPO_ROOT / "protos" / "SearchRadar.proto"
+BULLET_PROTO = REPO_ROOT / "protos" / "AtlasBullet.proto"
 
 
 def test_world_uses_project_local_protos_for_projectile_and_turret():
@@ -63,3 +64,24 @@ def test_search_radar_proto_preserves_runtime_fov_contracts():
     assert 'name "SEARCH_RADAR_ANGLE"' in search_radar_proto
 
 
+def test_atlas_bullet_proto_is_a_preplaced_solid():
+    """The bullet PROTO is a passive Solid (no controller/sensor), pre-placed
+    once as DEF ATLAS_BULLET, and is the non-bouncy contact material."""
+    world = WORLD_FILE.read_text(encoding="utf-8")
+    bullet_proto = BULLET_PROTO.read_text(encoding="utf-8")
+
+    # Pre-placed instance the supervisor recycles (not dynamically spawned).
+    assert "DEF ATLAS_BULLET AtlasBullet" in world
+    assert 'EXTERNPROTO "../protos/AtlasBullet.proto"' in world
+
+    # Non-bouncy bullet/ball contact so the ball is not knocked away pre-despawn.
+    assert 'material1 "atlas_bullet"' in world
+    assert "bounce 0" in world
+
+    # A passive Solid: no controller, no sensor, no Robot wrapper.
+    assert "PROTO AtlasBullet" in bullet_proto
+    assert "Solid {" in bullet_proto
+    assert "Robot {" not in bullet_proto
+    assert "controller" not in bullet_proto
+    assert "TouchSensor" not in bullet_proto
+    assert 'contactMaterial "atlas_bullet"' in bullet_proto
