@@ -23,6 +23,7 @@ from controller import Supervisor
 from atlas_logging import configure
 from projectile import Projectile, ProjectileConfig
 from scene import DEF_PROJECTILE
+from launch_jitter import next_launch_point
 
 log = configure("AttackerController", log_file="attacker_telemetry.log")
 
@@ -66,12 +67,7 @@ _nominal = list(NOMINAL_LAUNCH_POINT)
 def _next_launch():
     """select_launch hook: jitter (and drift) the nominal launch point."""
     global _nominal
-    point = [
-        _nominal[0] + _launch_rng.normal(0.0, LAUNCH_JITTER_M),
-        _nominal[1] + _launch_rng.normal(0.0, LAUNCH_JITTER_M),
-        _nominal[2],
-    ]
-    _nominal = [_nominal[i] + LAUNCH_DRIFT_PER_SHOT[i] for i in range(3)]
+    point, _nominal = next_launch_point(_nominal, LAUNCH_JITTER_M, LAUNCH_DRIFT_PER_SHOT, _launch_rng)
     log.info("[ATTACKER] launching from ~%s at t=%.2fs", [round(p, 2) for p in point], robot.getTime())
     return point, list(FIXED_LAUNCH_VELOCITY)
 
