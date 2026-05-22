@@ -36,6 +36,7 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   5. Report  — telemetry.report() (development instrument; no effect on control)
 """
 
+import logging
 import math
 import os
 
@@ -70,6 +71,23 @@ from scoreboard import Scoreboard
 # ---------------------------------------------------------------------------
 
 log = configure("AtlasController", log_file="atlas_telemetry.log")
+
+# Dedicated scoreboard log stream. The shoot-down vs ground-hit tally gets its
+# own file (atlas_score.log) plus a [SCORE] console tag, and is kept OUT of the
+# main controller log (propagate=False) so the operational result can be
+# followed on its own — e.g. `Get-Content atlas_score.log -Wait`. It also records
+# which pre-aim mode produced the run, so the file is self-describing for A/B.
+score_log = logging.getLogger("AtlasScore")
+score_log.setLevel(logging.INFO)
+score_log.propagate = False
+if not score_log.handlers:
+    _score_fmt = logging.Formatter("[SCORE] %(message)s")
+    for _score_handler in (
+        logging.StreamHandler(),
+        logging.FileHandler("atlas_score.log", mode="w", encoding="utf-8"),
+    ):
+        _score_handler.setFormatter(_score_fmt)
+        score_log.addHandler(_score_handler)
 
 # ---------------------------------------------------------------------------
 # Tuning constants
@@ -175,6 +193,8 @@ preaim_enabled = os.environ.get("ATLAS_PREAIM", "on").strip().lower() not in (
     "off", "0", "false", "no")
 log.info("[ATLAS] pre-aim %s",
          "ENABLED (adaptive)" if preaim_enabled else "DISABLED (fixed-beam baseline)")
+score_log.info("pre-aim %s",
+               "ENABLED (adaptive)" if preaim_enabled else "DISABLED (fixed-beam baseline)")
 
 # Adaptive launch-direction learner (Think layer). Online logistic regression
 # over self-discovered sectors; no dataset, no serialized model.
@@ -307,7 +327,7 @@ while robot.step(timestep) != -1:
     if ground_hit_link.hit_this_step():
         scoreboard.record_ground_hit()
     if bullet_hit_link.hit_this_step() or ground_hit_link.hit_this_step():
-        log.info("[ATLAS] %s", scoreboard.summary())
+        score_log.info("t=%.1fs %s", robot.getTime(), scoreboard.summary())
     pan_actual = pan_sensor.getValue()
     tilt_actual = tilt_sensor.getValue()
     if math.isnan(pan_actual):
