@@ -44,6 +44,7 @@ from sklearn.linear_model import SGDClassifier
 from atlas_logging import configure
 from sector_map import SectorMap
 from attack_predictor import AttackPredictor
+from launch_latch import LaunchLatch
 from fire_control_radar import FireControlRadar
 from search_radar_link import SearchRadarLink
 from attacker_ground_hit_link import AttackerGroundHitLink
@@ -235,13 +236,13 @@ telemetry.log_legend()
 step_count = 0  # simulation steps elapsed — shown in telemetry
 
 # Launch observation gating: a launch is the first FRESH radar acquisition AFTER
-# the previous projectile resolved. predictor_armed re-arms on each resolution
-# cue (ground/bullet hit) so each engagement yields exactly one observation.
-# Start DISARMED: the resolution cue clears cue_link only inside fsm.step()
-# (RESET), so observing on the resolution step itself would consume the stale
-# mid-flight/impact cue. The first engagement therefore contributes no
-# observation (cold start → IDLE holds the fixed beam) — that is correct.
-predictor_armed = False
+# the previous projectile resolved. LaunchLatch re-arms on each resolution cue
+# (ground/bullet hit) and yields exactly one observation per engagement — the
+# first non-None cue AFTER it has seen the cue go None (RESET cleared it). This
+# avoids consuming the stale mid-flight/impact cue, which RESET clears only a
+# step later inside fsm.step(). The first engagement contributes no observation
+# (cold start → IDLE holds the fixed beam) — that is correct.
+launch_latch = LaunchLatch()
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -300,27 +301,25 @@ while robot.step(timestep) != -1:
     if fcr_pos is not None:
         track_filter.update_fcr(fcr_pos)
 
-    # 3b. Adaptive launcher observation. On a resolution step we ONLY re-arm — we
-    #     must not observe yet, because cue_link still holds the stale
-    #     mid-flight/impact cue (RESET clears it later, inside fsm.step()). On a
-    #     later, non-resolution step the first FRESH cue after RESET is the next
-    #     projectile near its launch point, so its bearing ≈ the launch sector.
-    #     Fed before fsm.step() so IDLE pre-aims using the freshest prediction.
-    if ground_hit_link.hit_this_step() or bullet_hit_link.hit_this_step():
-        predictor_armed = True  # arm only; do NOT observe the stale cue this step
-    else:
-        cue = cue_link.get_cue()
-        if predictor_armed and cue is not None:
-            rel_x = cue[0] - turret_position[0]
-            rel_y = cue[1] - turret_position[1]
-            launch_bearing = math.atan2(rel_x, rel_y)  # pan convention
-            attack_predictor.observe(launch_bearing, robot.getTime())
-            predictor_armed = False
-            log.info(
-                "[ATLAS] launch observed: bearing=%.3f rad → predicted next sector %s",
-                launch_bearing,
-                attack_predictor.predicted_sector,
-            )
+    # 3b. Adaptive launcher observation (radar-only, segmented by resolution
+    # cues). LaunchLatch yields the first FRESH cue after the previous
+    # engagement's cue was cleared (the new projectile's earliest acquisition,
+    # ≈ its launch sector) — never the resolved projectile's stale in-flight cue.
+    # Fed before fsm.step() so IDLE pre-aims with the freshest prediction.
+    observed_cue = launch_latch.update(
+        resolved=ground_hit_link.hit_this_step() or bullet_hit_link.hit_this_step(),
+        cue=cue_link.get_cue(),
+    )
+    if observed_cue is not None:
+        rel_x = observed_cue[0] - turret_position[0]
+        rel_y = observed_cue[1] - turret_position[1]
+        launch_bearing = math.atan2(rel_x, rel_y)  # pan convention
+        attack_predictor.observe(launch_bearing, robot.getTime())
+        log.info(
+            "[ATLAS] launch observed: bearing=%.3f rad → predicted next sector %s",
+            launch_bearing,
+            attack_predictor.predicted_sector,
+        )
 
     # 4. Decide [event-driven state] — advance FSM one step
     fsm.step()
