@@ -44,6 +44,7 @@ from sklearn.linear_model import SGDClassifier
 from atlas_logging import configure
 from sector_map import SectorMap
 from attack_predictor import AttackPredictor
+from preaim_monitor import PreAimMonitor
 from launch_latch import LaunchLatch
 from fire_control_radar import FireControlRadar
 from search_radar_link import SearchRadarLink
@@ -174,6 +175,11 @@ attack_predictor = AttackPredictor(
     pre_aim_tilt=PRE_AIM_TILT_RAD,
 )
 
+# Pre-aim observability: scores each launch's predicted-vs-actual sector for the
+# console log (HIT/MISS, angular error, running accuracy vs a predict-last
+# baseline). Pure telemetry — no control influence.
+preaim_monitor = PreAimMonitor()
+
 bullet_node = robot.getFromDef(DEF_ATLAS_BULLET)
 if bullet_node is None:
     raise RuntimeError(f"Could not find DEF {DEF_ATLAS_BULLET} in the world file.")
@@ -243,6 +249,10 @@ step_count = 0  # simulation steps elapsed — shown in telemetry
 # step later inside fsm.step(). The first engagement contributes no observation
 # (cold start → IDLE holds the fixed beam) — that is correct.
 launch_latch = LaunchLatch()
+
+# Last sector we announced a pre-rotation toward, so the log only fires when the
+# pre-rotation target actually changes (not every observed launch).
+last_prerotate_sector = None
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -314,12 +324,40 @@ while robot.step(timestep) != -1:
         rel_x = observed_cue[0] - turret_position[0]
         rel_y = observed_cue[1] - turret_position[1]
         launch_bearing = math.atan2(rel_x, rel_y)  # pan convention
-        attack_predictor.observe(launch_bearing, robot.getTime())
-        log.info(
-            "[ATLAS] launch observed: bearing=%.3f rad → predicted next sector %s",
-            launch_bearing,
-            attack_predictor.predicted_sector,
-        )
+
+        # Score the pre-aim we were holding for THIS launch (captured before the
+        # online update changes the prediction), then learn from the launch.
+        predicted_before = attack_predictor.predicted_sector
+        ready_before = attack_predictor.get_ready_aim()
+        predicted_bearing = None if ready_before is None else ready_before[0]
+        actual_sector = attack_predictor.observe(launch_bearing, robot.getTime())
+        preaim_monitor.record(predicted_before, actual_sector,
+                              predicted_bearing, launch_bearing)
+
+        if predicted_before is None:
+            log.info(
+                "[ATLAS] launch from sector %d (%.1f°) — cold start, no pre-aim yet | %s",
+                actual_sector, math.degrees(launch_bearing), preaim_monitor.summary(),
+            )
+        else:
+            hit = "HIT" if predicted_before == actual_sector else "MISS"
+            err_deg = preaim_monitor.last_error_deg
+            err_str = "n/a" if err_deg is None else "%.1f°" % err_deg
+            log.info(
+                "[ATLAS] launch from sector %d (%.1f°); pre-aimed sector %d (%s, err %s) | %s",
+                actual_sector, math.degrees(launch_bearing),
+                predicted_before, hit, err_str, preaim_monitor.summary(),
+            )
+
+        # Announce a change in the pre-rotation target for the NEXT launch.
+        next_aim = attack_predictor.get_ready_aim()
+        next_sector = attack_predictor.predicted_sector
+        if next_aim is not None and next_sector != last_prerotate_sector:
+            log.info(
+                "[ATLAS] pre-rotating toward sector %d (bearing %.1f°) for next launch",
+                next_sector, math.degrees(next_aim[0]),
+            )
+            last_prerotate_sector = next_sector
 
     # 4. Decide [event-driven state] — advance FSM one step
     fsm.step()
