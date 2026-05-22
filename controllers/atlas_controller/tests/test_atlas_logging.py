@@ -4,17 +4,24 @@ import logging
 import atlas_logging
 
 
-def test_log_levels_table_has_atlas_score():
-    """The scoreboard stream is registered in the central level table."""
-    assert "AtlasScore" in atlas_logging.LOG_LEVELS
+def test_atlas_score_defaults_to_info():
+    """The scoreboard stream is registered and defaults to INFO (on by default)."""
+    assert atlas_logging.LOG_LEVELS.get("AtlasScore") == "INFO"
+
+
+def test_controllers_default_to_warning():
+    """Controllers are quiet by default so the scoreboard stays in focus."""
+    for ctrl in ("AttackerController", "AtlasController", "SearchRadarController"):
+        assert atlas_logging.LOG_LEVELS[ctrl] == "WARNING"
+    assert atlas_logging.DEFAULT_LEVEL == "WARNING"
 
 
 def test_scoreboard_logger_is_isolated_with_handlers():
     """configure_scoreboard returns a non-propagating logger with handlers."""
-    log = atlas_logging.configure_scoreboard(name="TestScoreIsolated", log_file=None)
+    log = atlas_logging.configure_scoreboard(name="AtlasScore", log_file=None)
     assert log.propagate is False
     assert len(log.handlers) >= 1
-    assert log.level == logging.INFO  # default from the table / DEFAULT_LEVEL
+    assert log.level == logging.INFO  # AtlasScore is INFO in the central table
 
 
 def test_scoreboard_level_controlled_centrally_by_env(monkeypatch):

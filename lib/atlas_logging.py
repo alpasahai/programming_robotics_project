@@ -33,12 +33,15 @@ import os
 # Keys are the logger names passed to configure(); values are level names.
 # ---------------------------------------------------------------------------
 LOG_LEVELS = {
-    "AttackerController": "INFO",
-    "AtlasController": "INFO",
-    "SearchRadarController": "INFO",
+    # Controllers default to WARNING so the console stays focused on the
+    # scoreboard; raise an individual one to "INFO"/"DEBUG" (here or via its
+    # env var) when debugging that controller.
+    "AttackerController": "WARNING",
+    "AtlasController": "WARNING",
+    "SearchRadarController": "WARNING",
     "AtlasScore": "INFO",  # the operational scoreboard; set "CRITICAL" to silence
 }
-DEFAULT_LEVEL = "INFO"
+DEFAULT_LEVEL = "WARNING"
 
 _FORMAT = "[%(levelname)s - %(name)s] %(message)s"
 
