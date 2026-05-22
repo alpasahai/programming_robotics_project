@@ -36,14 +36,13 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   5. Report  — telemetry.report() (development instrument; no effect on control)
 """
 
-import logging
 import math
 import os
 
 from controller import Supervisor
 from sklearn.linear_model import SGDClassifier
 
-from atlas_logging import configure
+from atlas_logging import configure, configure_scoreboard
 from sector_map import SectorMap
 from attack_predictor import AttackPredictor
 from preaim_monitor import PreAimMonitor
@@ -72,22 +71,11 @@ from scoreboard import Scoreboard
 
 log = configure("AtlasController", log_file="atlas_telemetry.log")
 
-# Dedicated scoreboard log stream. The shoot-down vs ground-hit tally gets its
-# own file (atlas_score.log) plus a [SCORE] console tag, and is kept OUT of the
-# main controller log (propagate=False) so the operational result can be
-# followed on its own — e.g. `Get-Content atlas_score.log -Wait`. It also records
-# which pre-aim mode produced the run, so the file is self-describing for A/B.
-score_log = logging.getLogger("AtlasScore")
-score_log.setLevel(logging.INFO)
-score_log.propagate = False
-if not score_log.handlers:
-    _score_fmt = logging.Formatter("[SCORE] %(message)s")
-    for _score_handler in (
-        logging.StreamHandler(),
-        logging.FileHandler("atlas_score.log", mode="w", encoding="utf-8"),
-    ):
-        _score_handler.setFormatter(_score_fmt)
-        score_log.addHandler(_score_handler)
+# Dedicated scoreboard log stream (its own file atlas_score.log + [SCORE] console
+# tag, kept out of the main controller log). Level/visibility is controlled
+# centrally from lib/atlas_logging.py (the "AtlasScore" key) — set it to
+# "CRITICAL" there, or export ATLASSCORE_LOG_LEVEL, to turn scoreboard logging off.
+score_log = configure_scoreboard()
 
 # ---------------------------------------------------------------------------
 # Tuning constants
