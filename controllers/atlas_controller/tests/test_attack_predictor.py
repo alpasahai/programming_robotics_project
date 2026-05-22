@@ -36,6 +36,18 @@ def _bearings_for(sectors):
     return [table[s] for s in sectors]
 
 
+def test_observe_returns_discovered_sector_id():
+    """observe() returns the SectorMap id the launch bearing was assigned to."""
+    sm = SectorMap(tol_rad=0.3)
+    p = AttackPredictor(StubModel(), sm, max_sectors=MAX_SECTORS, pre_aim_tilt=PRE_AIM_TILT)
+    s0 = p.observe(0.0, 0.0)    # first sector → id 0
+    s1 = p.observe(1.5, 1.0)    # new far bearing → id 1
+    s0b = p.observe(0.02, 2.0)  # near first → id 0 again
+    assert s0 == 0
+    assert s1 == 1
+    assert s0b == 0
+
+
 def test_cold_start_reports_no_prediction():
     """Before two sectors are seen, get_ready_aim() is None."""
     p = AttackPredictor(StubModel(), SectorMap(tol_rad=0.3), max_sectors=MAX_SECTORS,

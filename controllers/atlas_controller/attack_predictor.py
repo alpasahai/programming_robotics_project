@@ -49,8 +49,13 @@ class AttackPredictor:
         """The currently predicted next sector id, or None during cold start."""
         return self._predicted_sector
 
-    def observe(self, bearing, time) -> None:
-        """Ingest one launch: discover its sector, learn online, re-predict."""
+    def observe(self, bearing, time) -> int:
+        """Ingest one launch: discover its sector, learn online, re-predict.
+
+        Returns the SectorMap id the launch bearing was assigned to (the just-
+        discovered/matched sector for this launch). The controller uses it to
+        score the pre-aim it had been holding for this launch.
+        """
         sector = self._sector_map.observe(bearing)
 
         # Online update: the just-arrived sector is the label for the context
@@ -73,6 +78,8 @@ class AttackPredictor:
             self._predicted_sector = int(self._model.predict(X_next)[0])
         else:
             self._predicted_sector = None
+
+        return sector
 
     def get_ready_aim(self):
         """Return (pan, tilt) toward the predicted sector, or None.
