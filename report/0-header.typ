@@ -25,8 +25,8 @@
     // TODO: GITHUB LINK
     // TODO: ALPA'S S NUMBER
     [*Author 1:*], [Madeline Abio s5259572],
-    [*Author 2:*], [Alpa Sahai {STUDENT NUMBER}],
-    [*GitHub Link:*], [ ADD ],
+    [*Author 2:*], [Alpa Sahai s5405889],
+    [*GitHub Link:*], [https://github.com/alpasahai/programming_robotics_project.git],
     [*Specialisation Option Chosen:*], [Embedded Intelligence],
   )
 
