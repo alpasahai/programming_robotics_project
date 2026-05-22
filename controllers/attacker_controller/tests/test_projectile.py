@@ -119,6 +119,34 @@ def test_respawn_after_delay_relaunches():
     assert node.set_velocity_calls[-1] == [7, 8, 9, 0, 0, 0]
 
 
+def test_select_launch_sets_pose_before_spawn():
+    """spawn() calls select_launch and uses its (position, velocity)."""
+    node = StubProjectileNode()
+    calls = []
+
+    def select_launch():
+        calls.append(True)
+        return ([1.0, 2.0, 0.5], [3.0, 4.0, 5.0, 0, 0, 0])
+
+    proj = Projectile(node, ProjectileConfig(), select_launch=select_launch)
+    proj.spawn()
+
+    assert calls == [True]
+    assert proj.config.spawn_position == [1.0, 2.0, 0.5]
+    assert proj.config.launch_velocity == [3.0, 4.0, 5.0, 0, 0, 0]
+    assert node.last_velocity == [3.0, 4.0, 5.0, 0, 0, 0]
+
+
+def test_no_select_launch_keeps_fixed_config():
+    """Without select_launch, spawn() uses the config as-is (back-compat)."""
+    node = StubProjectileNode()
+    cfg = ProjectileConfig(spawn_position=[0, -10, 0.5], launch_velocity=[0, 2, 10, 0, 0, 0])
+    proj = Projectile(node, cfg)
+    proj.spawn()
+    assert proj.config.spawn_position == [0, -10, 0.5]
+    assert node.last_velocity == [0, 2, 10, 0, 0, 0]
+
+
 def test_repeated_landings_increment_count():
     config = ProjectileConfig(respawn_delay_ms=1000)
     node, projectile = _make(config)

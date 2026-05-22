@@ -69,6 +69,7 @@ class Projectile:
         config: ProjectileConfig | None = None,
         on_ground_hit=None,
         on_bullet_hit=None,
+        select_launch=None,
     ):
         """
         Args:
@@ -79,12 +80,22 @@ class Projectile:
             on_bullet_hit: Optional callable(count:int) fired when the ball is
                            struck mid-air (by the turret bullet). Dormant until
                            the bullet exists.
+            select_launch: Optional callable() -> (spawn_position, launch_velocity),
+                           invoked at the top of spawn() to choose where the NEXT
+                           ball launches from. None → the fixed config is reused
+                           every spawn (original single-corridor behaviour). The
+                           attacker uses this to launch from multiple sectors.
         """
         self.config = config if config is not None else ProjectileConfig()
         self._node = node
         self._translation = node.getField("translation")
         self._on_ground_hit = on_ground_hit
         self._on_bullet_hit = on_bullet_hit
+        # Optional callable () -> (spawn_position, launch_velocity), invoked at
+        # the top of spawn() to choose where the NEXT ball launches from. None →
+        # the fixed config is reused every spawn (original single-corridor
+        # behaviour). The attacker uses this to launch from multiple sectors.
+        self._select_launch = select_launch
         self._state = _State.DESPAWNED
         self._despawn_time_ms = 0
         self._airborne = False  # has the ball cleared the floor since spawn?
@@ -94,12 +105,20 @@ class Projectile:
     def spawn(self):
         """Place the ball at the spawn point and launch it (enter ACTIVE).
 
+        If a select_launch callback was supplied, it chooses this launch's
+        spawn_position/launch_velocity first (multi-sector attack). See the
+        resetPhysics() note below.
+
         Deliberately does NOT call resetPhysics() here: in Webots, a
         resetPhysics() in the same timestep as setVelocity() zeroes the velocity
         we are trying to apply, so the ball never launches. Physics is reset in
         _despawn() instead (a different timestep), leaving the parked body clean
         before we relaunch it.
         """
+        if self._select_launch is not None:
+            spawn_position, launch_velocity = self._select_launch()
+            self.config.spawn_position = spawn_position
+            self.config.launch_velocity = launch_velocity
         self._translation.setSFVec3f(self.config.spawn_position)
         self._node.setVelocity(self.config.launch_velocity)
         self._airborne = False
