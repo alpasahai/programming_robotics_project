@@ -48,4 +48,5 @@ def test_bearing_returns_cluster_centre():
     sm = SectorMap(tol_rad=0.2)
     sm.observe(1.0)
     sm.observe(1.1)
-    assert abs(sm.bearing(0) - 1.0) < 0.2
+    # Verify the nudge MOVES the centre toward the second observation
+    assert 1.0 < sm.bearing(0) < 1.1

@@ -14,7 +14,7 @@ _TWO_PI = 2.0 * math.pi
 
 
 def _ang_diff(a, b):
-    """Signed smallest angle a−b, in (−π, π]."""
+    """Signed smallest angle a−b, in [−π, π)."""
     return (a - b + math.pi) % _TWO_PI - math.pi
 
 
@@ -43,9 +43,10 @@ class SectorMap:
                 best_id, best_dist = i, d
         if best_id is not None and best_dist <= self._tol:
             # Nudge the centre toward the new bearing (wrap-safe).
-            self._centers[best_id] = self._centers[best_id] + self._nudge * _ang_diff(
+            updated = self._centers[best_id] + self._nudge * _ang_diff(
                 bearing, self._centers[best_id]
             )
+            self._centers[best_id] = (updated + math.pi) % _TWO_PI - math.pi
             return best_id
         self._centers.append(bearing)
         return len(self._centers) - 1
