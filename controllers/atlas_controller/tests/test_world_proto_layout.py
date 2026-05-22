@@ -77,6 +77,7 @@ def test_atlas_bullet_proto_is_a_preplaced_solid():
     # Non-bouncy bullet/ball contact so the ball is not knocked away pre-despawn.
     assert 'material1 "atlas_bullet"' in world
     assert "bounce 0" in world
+    assert "bounceVelocity 0" in world
 
     # A passive Solid: no controller, no sensor, no Robot wrapper.
     assert "PROTO AtlasBullet" in bullet_proto
