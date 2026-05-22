@@ -30,6 +30,8 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   2. Predict — track_filter.predict()                      [sim-clock cadence]
   3. Fuse    — track_filter.update_fcr() when FCR is locked [sim-clock cadence]
   4. Decide  — fsm.step()                                  [event-driven state]
+  4b. Fire   — fsm.consume_fire_command(), bullet.fire()    [event-driven state]
+  4c. Recycle — bullet.step(), bullet.recycle() on engagement end [event-driven]
   5. Report  — telemetry.report() (development instrument; no effect on control)
 """
 
@@ -235,6 +237,12 @@ while robot.step(timestep) != -1:
             ground_hit_link.count,
             robot.getTime(),
         )
+    if bullet_hit_link.hit_this_step():
+        log.info(
+            "[ATLAS] bullet-hit cue received: hit #%d at t=%.2fs",
+            bullet_hit_link.count,
+            robot.getTime(),
+        )
     pan_actual = pan_sensor.getValue()
     tilt_actual = tilt_sensor.getValue()
     if math.isnan(pan_actual):
@@ -267,7 +275,12 @@ while robot.step(timestep) != -1:
     if fire_command is not None:
         if bullet.is_parked:
             bullet.fire(fire_command)
-            log.info("FIRE — bullet launched toward intercept %s", fire_command)
+            log.info(
+                "FIRE — bullet launched toward intercept [%.3f, %.3f, %.3f]",
+                fire_command[0],
+                fire_command[1],
+                fire_command[2],
+            )
         else:
             log.info("FIRE ignored — a bullet is still in flight")
 
