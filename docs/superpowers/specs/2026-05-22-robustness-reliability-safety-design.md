@@ -76,13 +76,29 @@ The report/video should claim them explicitly.
 | E6 | **Fire-convergence gate** — the turret does **not** fire in TRACK_PREDICT until the predicted-vs-observed *error gap closes* (`pred_error < track_error_threshold=0.3 m`) for `converge_frames=3` consecutive steps | Reliability + Safety | `fsm.py:334-345` | Fire discipline: it will only shoot once its *own past predictions* have proven accurate, so it consistently waits for a trustworthy track (Reliability) and never looses a wild shot on an unconverged estimate (Safety). This is a real, in-tree fail-safe to claim explicitly. |
 | E7 | **Pan-seam unwrap** prevents the turret whipping a near-360° turn | Robustness | `fsm.py:496-521` | Stable, predictable mechanical motion — "stable operation" in the literal sense. |
 | E8 | **Atomic dual-motor command** — pan & tilt always commanded together | Robustness | `fsm.py:453-494` | No half-slewed states where one axis lags the other. |
-| E9 | **NaN guard on joint position sensors** (fall back to 0.0) | Robustness | `atlas_controller.py:249-252` | Survives the unsettled first-tick sensor read without crashing. |
-| E10 | **Bullet max-lifetime timeout** (`BULLET_MAX_LIFETIME_STEPS=400`) recycles a never-resolving bullet | Safety | `atlas_controller.py:92, 299-305` | No orphaned/leaked projectiles; bounded engagement duration. |
-| E11 | **"One bullet at a time" interlock** — fire ignored while a bullet is in flight, logged | Safety | `atlas_controller.py:283-293` | A fire-rate interlock — can't double-fire. |
 | E12 | **FCR FOV-cone + range gate** — only locks/fuses targets inside the beam | Robustness | `fire_control_radar.py:106-117` | Rejects off-axis returns; the filter is never fed a target the sensor can't actually see. |
 | E13 | **Search-radar track-timeout buffer** holds a track across beam passes, drops it after N misses | Robustness | `search_radar.py:208-258` | Tolerates momentary loss of detection (object briefly disappears) without dropping lock instantly. |
-| E14 | **Fail-fast on missing scene nodes** (`RuntimeError` if DEF not found) | Reliability | `atlas_controller.py:131, 154` | Misconfiguration surfaces immediately, not as silent wrong behaviour. |
 | E15 | **Stale-cue clearing on RESET** (cue link has no expiry; RESET clears it) | Reliability | `search_radar_link.py:55-64`, `fsm.py:402` | Prevents a leftover cue from re-triggering an engagement against a phantom target. |
+
+*(E-numbers are stable labels; the gaps are the items moved to "Excluded" below.)*
+
+### Excluded — simulation mechanics / plumbing, **not** robot S/R/R
+
+These exist in the code but are Webots/simulation housekeeping or software
+plumbing, not genuine *robot* safety/reliability/robustness. We deliberately do
+**not** claim them under this criterion (claiming them would be a weak,
+easily-challenged answer in the viva):
+
+- **Bullet max-lifetime timeout** (`atlas_controller.py:92, 299-305`) — bookkeeping
+  for the single *recycled* Webots bullet node, not a real munitions safety system.
+- **"One bullet at a time" recycling** (`atlas_controller.py:283-293`) — a
+  consequence of there being one reusable bullet node in the sim. *(A genuine
+  fire-rate interlock would be a real feature — but that's a new idea, not an
+  existing one.)*
+- **NaN guard on joint sensors** (`atlas_controller.py:249-252`) — handles a Webots
+  first-tick `getValue()` artifact, not a real sensor fault.
+- **Fail-fast on missing DEF nodes** (`atlas_controller.py:131, 154`) — world-file /
+  config plumbing; belongs under *Code Quality*, not S/R/R.
 
 ### Bill of existing features, grouped by the three concepts
 
@@ -95,8 +111,6 @@ appear under more than one concept — that is expected and noted.
 |---------|---------------------|
 | E3 Hit-cue pre-emption | Stops engaging the instant the threat is resolved/landed — no firing at a dead target. |
 | E6 Fire-convergence gate | Won't loose a shot until the predicted-vs-observed error gap has closed for 3 steps — no wild shots on an unconverged track. |
-| E10 Bullet lifetime timeout | A bullet that never resolves is recycled — no runaway/orphaned projectile. |
-| E11 Single-bullet interlock | Cannot double-fire while a bullet is in flight — bounded fire rate. |
 
 **RELIABILITY — *the system keeps working and recovers cleanly.***
 
@@ -106,7 +120,6 @@ appear under more than one concept — that is expected and noted.
 | E2 Out-of-range auto-reset | A lost / out-of-range target deterministically triggers recovery rather than hanging. |
 | E4 Kalman noise filtering | Consistent state estimate from noisy measurements — stable tracking run to run. |
 | E6 Fire-convergence gate | Fires only on a track that has *proven* accurate, so engagement outcomes are repeatable, not lucky. |
-| E14 Fail-fast on missing nodes | Misconfiguration surfaces immediately instead of degrading silently. |
 | E15 Stale-cue clearing on RESET | A fresh cycle never acts on leftover state from the previous engagement. |
 
 **ROBUSTNESS — *the system tolerates adverse / varying conditions.***
@@ -117,16 +130,17 @@ appear under more than one concept — that is expected and noted.
 | E5 Acquire debounce | Rejects single-frame spurious cues — won't slew on a blip. |
 | E7 Pan-seam unwrap | Stable motor motion across the ±π discontinuity — no twitch under bearing jitter. |
 | E8 Atomic dual-motor command | No half-slewed states where one axis lags the other. |
-| E9 NaN sensor guard | Survives the unsettled first-tick sensor read without crashing. |
 | E12 FCR FOV/range gate | Rejects off-axis/out-of-range returns — the filter is never fed garbage. |
 | E13 Search-radar track-timeout | Tolerates momentary loss of detection (object briefly disappears) without instantly dropping lock. |
 
-**Headline:** *Reliability* is well covered (E1/E2/E4/E6/E14/E15) and so is
-*Robustness* (E4/E5/E7/E8/E9/E12/E13). *Safety* has real mechanisms (E3/E6/E10/E11)
-**but the pitch's specifically-promised Safety mechanism — "if the motors operate
-above a certain movement frequency, the system enters RESET" — is NOT
-implemented** (see W1 below). Closing that (idea C1) is the highest-priority gap,
-because the team has already written it down as a deliverable.
+**Headline:** *Reliability* is well covered (E1/E2/E4/E6/E15) and so is
+*Robustness* (E4/E5/E7/E8/E12/E13). *Safety* is the thinnest column — only E3 and
+E6 are genuine robot-level safety behaviours (the bullet-recycling/NaN/missing-node
+items are simulation plumbing, excluded above) — **and the pitch's
+specifically-promised Safety mechanism, "if the motors operate above a movement
+frequency, the system enters RESET", is NOT implemented** (see W1). That makes
+Safety the area most in need of new work: closing the watchdog gap (idea C1) and
+adding the friendly-fire interlock (M1) are the highest-priority additions.
 
 ### Partially implemented / scaffolded
 
