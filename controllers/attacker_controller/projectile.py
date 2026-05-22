@@ -91,10 +91,6 @@ class Projectile:
         self._translation = node.getField("translation")
         self._on_ground_hit = on_ground_hit
         self._on_bullet_hit = on_bullet_hit
-        # Optional callable () -> (spawn_position, launch_velocity), invoked at
-        # the top of spawn() to choose where the NEXT ball launches from. None →
-        # the fixed config is reused every spawn (original single-corridor
-        # behaviour). The attacker uses this to launch from multiple sectors.
         self._select_launch = select_launch
         self._state = _State.DESPAWNED
         self._despawn_time_ms = 0
@@ -117,8 +113,8 @@ class Projectile:
         """
         if self._select_launch is not None:
             spawn_position, launch_velocity = self._select_launch()
-            self.config.spawn_position = spawn_position
-            self.config.launch_velocity = launch_velocity
+            self.config.spawn_position = list(spawn_position)
+            self.config.launch_velocity = list(launch_velocity)
         self._translation.setSFVec3f(self.config.spawn_position)
         self._node.setVelocity(self.config.launch_velocity)
         self._airborne = False
