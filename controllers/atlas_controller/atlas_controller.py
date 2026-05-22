@@ -39,8 +39,11 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
 import math
 
 from controller import Supervisor
+from sklearn.linear_model import SGDClassifier
 
 from atlas_logging import configure
+from sector_map import SectorMap
+from attack_predictor import AttackPredictor
 from fire_control_radar import FireControlRadar
 from search_radar_link import SearchRadarLink
 from attacker_ground_hit_link import AttackerGroundHitLink
@@ -90,6 +93,17 @@ MUZZLE_SPEED_MPS = 18.0
 MUZZLE_OFFSET_M = 0.6           # spawn this far along the aim, clear of the turret
 BULLET_PARK_POSITION = [0.0, 0.0, -100.0]
 BULLET_MAX_LIFETIME_STEPS = 400  # safety: recycle a bullet that never resolves
+
+# --- Adaptive launch-direction learner ---
+# The Search Radar position noise (≈0.2 m, see search_radar_controller) at the
+# ~10 m launch range subtends a small bearing noise; the sector-clustering
+# tolerance is a few × that, comfortably below the spacing between real sectors.
+# Derived, not hand-tuned.
+SEARCH_RADAR_NOISE_STD_M = 0.2
+NOMINAL_LAUNCH_RANGE_M = 10.0
+SECTOR_TOL_RAD = 4.0 * SEARCH_RADAR_NOISE_STD_M / NOMINAL_LAUNCH_RANGE_M  # ≈0.08 rad
+MAX_SECTORS = 8                 # capacity bound (fixed feature width / class set)
+PRE_AIM_TILT_RAD = 0.3          # elevation held while pre-aiming at a sector
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -150,6 +164,15 @@ cue_link = SearchRadarLink(receiver)
 ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
 bullet_hit_link = BulletHitLink(bullet_hit_receiver)
 
+# Adaptive launch-direction learner (Think layer). Online logistic regression
+# over self-discovered sectors; no dataset, no serialized model.
+attack_predictor = AttackPredictor(
+    model=SGDClassifier(loss="log_loss", random_state=0),
+    sector_map=SectorMap(tol_rad=SECTOR_TOL_RAD, max_clusters=MAX_SECTORS),
+    max_sectors=MAX_SECTORS,
+    pre_aim_tilt=PRE_AIM_TILT_RAD,
+)
+
 bullet_node = robot.getFromDef(DEF_ATLAS_BULLET)
 if bullet_node is None:
     raise RuntimeError(f"Could not find DEF {DEF_ATLAS_BULLET} in the world file.")
@@ -184,6 +207,7 @@ sensors = SensorSuite(
     ballistic_predictor=ballistic_predictor,
     ground_hit_link=ground_hit_link,
     bullet_hit_link=bullet_hit_link,
+    attack_predictor=attack_predictor,
 )
 hardware = TurretHardware(
     pan_motor=pan,
@@ -209,6 +233,15 @@ telemetry = TrackTelemetry(
 telemetry.log_legend()
 
 step_count = 0  # simulation steps elapsed — shown in telemetry
+
+# Launch observation gating: a launch is the first FRESH radar acquisition AFTER
+# the previous projectile resolved. predictor_armed re-arms on each resolution
+# cue (ground/bullet hit) so each engagement yields exactly one observation.
+# Start DISARMED: the resolution cue clears cue_link only inside fsm.step()
+# (RESET), so observing on the resolution step itself would consume the stale
+# mid-flight/impact cue. The first engagement therefore contributes no
+# observation (cold start → IDLE holds the fixed beam) — that is correct.
+predictor_armed = False
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -266,6 +299,28 @@ while robot.step(timestep) != -1:
     fcr_pos = fcr.get_target_position()
     if fcr_pos is not None:
         track_filter.update_fcr(fcr_pos)
+
+    # 3b. Adaptive launcher observation. On a resolution step we ONLY re-arm — we
+    #     must not observe yet, because cue_link still holds the stale
+    #     mid-flight/impact cue (RESET clears it later, inside fsm.step()). On a
+    #     later, non-resolution step the first FRESH cue after RESET is the next
+    #     projectile near its launch point, so its bearing ≈ the launch sector.
+    #     Fed before fsm.step() so IDLE pre-aims using the freshest prediction.
+    if ground_hit_link.hit_this_step() or bullet_hit_link.hit_this_step():
+        predictor_armed = True  # arm only; do NOT observe the stale cue this step
+    else:
+        cue = cue_link.get_cue()
+        if predictor_armed and cue is not None:
+            rel_x = cue[0] - turret_position[0]
+            rel_y = cue[1] - turret_position[1]
+            launch_bearing = math.atan2(rel_x, rel_y)  # pan convention
+            attack_predictor.observe(launch_bearing, robot.getTime())
+            predictor_armed = False
+            log.info(
+                "[ATLAS] launch observed: bearing=%.3f rad → predicted next sector %s",
+                launch_bearing,
+                attack_predictor.predicted_sector,
+            )
 
     # 4. Decide [event-driven state] — advance FSM one step
     fsm.step()
