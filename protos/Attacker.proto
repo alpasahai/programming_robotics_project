@@ -26,6 +26,12 @@ PROTO Attacker [
         channel 2
         range -1
       }
+      Emitter {
+        name "ATTACKER_BULLET_EMITTER"
+        type "radio"
+        channel 3
+        range -1
+      }
     ]
   }
 }
