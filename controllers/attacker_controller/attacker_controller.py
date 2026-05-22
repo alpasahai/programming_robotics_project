@@ -67,7 +67,7 @@ def on_ground_hit(count):
 
 
 def on_bullet_hit(count):
-    """Register a turret-bullet hit (dormant until the bullet exists)."""
+    """Register a turret-bullet hit (emits on channel 3)."""
     log.info(
         "[ATTACKER] bullet hit #%d registered at t=%.2fs — despawning ball; "
         "spawning a new one in %.0fms",
@@ -77,7 +77,7 @@ def on_bullet_hit(count):
     )
     # Emit the authoritative bullet-hit pulse (channel 3, one 4-byte int =
     # running bullet-hit count). This is ATLAS's only source of
-    # projectile-destroyed truth — see the engage-fire bullet design and #32.
+    # projectile-destroyed truth — see docs/superpowers/specs/2026-05-22-engage-fire-bullet-design.md and #32.
     bullet_emitter.send(struct.pack("i", count))
 
 
