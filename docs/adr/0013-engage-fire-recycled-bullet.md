@@ -48,6 +48,19 @@ the double-counting a bullet-side detector would reintroduce.
 untestable; keeping it in the controller and having the FSM emit a plain
 `[dx, dy, dz]` keeps the FSM pure.
 
+**Two-phase launch (teleport, then velocity a step later):** Webots applies a
+`translation`-field write on the *next* `robot.step()`, and that teleport resets
+the Solid's velocity. A `setVelocity()` issued in the same step as the muzzle
+teleport is therefore wiped before it moves the body — observed in Webots as the
+bullet dropping straight down at the muzzle (a stub-based unit test cannot see
+this). So `Bullet.fire()` only teleports + `resetPhysics()` and stashes the launch
+velocity (state `LAUNCHING`); `Bullet.launch()` applies the velocity one step
+later (state `IN_FLIGHT`), once the teleport has landed and no pending translation
+write remains. The controller runs phase two (`launch()`) just before phase one
+(`fire()`) each step. The incoming `Projectile` does not need this because its
+relaunch is always preceded by a despawn in an earlier step; the bullet's
+fire/launch are adjacent, so the ordering is made explicit.
+
 ## Consequences
 
 - New: `protos/AtlasBullet.proto`, `controllers/atlas_controller/bullet.py`,

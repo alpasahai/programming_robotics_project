@@ -30,6 +30,7 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   2. Predict — track_filter.predict()                      [sim-clock cadence]
   3. Fuse    — track_filter.update_fcr() when FCR is locked [sim-clock cadence]
   4. Decide  — fsm.step()                                  [event-driven state]
+  4a. Launch — bullet.launch() for a bullet armed last step [event-driven state]
   4b. Fire   — fsm.consume_fire_command(), bullet.fire()    [event-driven state]
   4c. Recycle — bullet.step(), bullet.recycle() on engagement end [event-driven]
   5. Report  — telemetry.report() (development instrument; no effect on control)
@@ -269,14 +270,21 @@ while robot.step(timestep) != -1:
     # 4. Decide [event-driven state] — advance FSM one step
     fsm.step()
 
-    # 4b. Fire — launch the recycled bullet when the FSM commits to a shot.
-    #     One bullet at a time: a fire command while in flight is ignored.
+    # 4a. Launch — apply the launch velocity to a bullet armed last step. The
+    #     muzzle teleport issued by fire() has now been applied by robot.step(),
+    #     so setVelocity here is not wiped by a pending translation write
+    #     (two-phase launch — see Bullet.fire/launch and ADR-0013).
+    if bullet.is_launching:
+        bullet.launch()
+
+    # 4b. Fire — arm the recycled bullet when the FSM commits to a shot. One
+    #     bullet at a time: a fire command while armed/in flight is ignored.
     fire_command = fsm.consume_fire_command()
     if fire_command is not None:
         if bullet.is_parked:
             bullet.fire(fire_command)
             log.info(
-                "FIRE — bullet launched toward intercept [%.3f, %.3f, %.3f]",
+                "FIRE — bullet armed toward intercept [%.3f, %.3f, %.3f]",
                 fire_command[0],
                 fire_command[1],
                 fire_command[2],
