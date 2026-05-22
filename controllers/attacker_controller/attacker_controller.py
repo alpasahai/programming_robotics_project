@@ -32,6 +32,10 @@ emitter = robot.getDevice("ATTACKER_EMITTER")
 if emitter is None:
     raise RuntimeError("[ATTACKER] Could not find device ATTACKER_EMITTER.")
 
+bullet_emitter = robot.getDevice("ATTACKER_BULLET_EMITTER")
+if bullet_emitter is None:
+    raise RuntimeError("[ATTACKER] Could not find device ATTACKER_BULLET_EMITTER.")
+
 projectile_node = robot.getFromDef(DEF_PROJECTILE)
 if projectile_node is None:
     raise RuntimeError(
@@ -63,7 +67,7 @@ def on_ground_hit(count):
 
 
 def on_bullet_hit(count):
-    """Register a turret-bullet hit (dormant until the bullet exists)."""
+    """Register a turret-bullet hit (emits on channel 3)."""
     log.info(
         "[ATTACKER] bullet hit #%d registered at t=%.2fs — despawning ball; "
         "spawning a new one in %.0fms",
@@ -71,6 +75,10 @@ def on_bullet_hit(count):
         robot.getTime(),
         config.respawn_delay_ms,
     )
+    # Emit the authoritative bullet-hit pulse (channel 3, one 4-byte int =
+    # running bullet-hit count). This is ATLAS's only source of
+    # projectile-destroyed truth — see docs/superpowers/specs/2026-05-22-engage-fire-bullet-design.md and #32.
+    bullet_emitter.send(struct.pack("i", count))
 
 
 projectile = Projectile(

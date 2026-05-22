@@ -1,1 +1,40 @@
-# PLACEHOLDER
+#VRML_SIM R2025a utf8
+# The turret's fired projectile: a small, fast, recycled sphere.
+# A passive Solid (NOT a Robot) — carries no supervisor script, sensor, or radio.
+# The ATLAS supervisor recycles ONE pre-placed instance
+# (DEF ATLAS_BULLET): teleport + setVelocity to fire, teleport to park.
+# Hit detection is owned by the incoming Projectile (single source of truth, #32),
+# so the bullet needs no sensor of its own. See ADR-0013.
+
+PROTO AtlasBullet [
+  field SFVec3f translation 0 0 -100
+  field SFString name "ATLAS_BULLET"
+  field SFVec3f linearVelocity 0 0 0
+] {
+  Solid {
+    translation IS translation
+    children [
+      DEF BULLET_SHAPE Shape {
+        appearance PBRAppearance {
+          baseColor 0 0.4 1
+          emissiveColor 0 0.2 0.6
+          roughness 0.3
+          metalness 0
+        }
+        geometry Sphere {
+          radius 0.15
+          subdivision 3
+        }
+      }
+    ]
+    name IS name
+    model "atlas_bullet"
+    contactMaterial "atlas_bullet"
+    boundingObject USE BULLET_SHAPE
+    physics Physics {
+      density -1
+      mass 0.05
+    }
+    linearVelocity IS linearVelocity
+  }
+}

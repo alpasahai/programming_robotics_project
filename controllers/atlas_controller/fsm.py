@@ -26,6 +26,7 @@ class SensorSuite:
     track_filter: object  # TrackFilter
     ballistic_predictor: object  # BallisticTrajectoryPredictor
     ground_hit_link: object  # AttackerGroundHitLink — attacker ground-hit pulse
+    bullet_hit_link: object  # BulletHitLink — attacker bullet-hit (projectile-destroyed) pulse
 
 
 @dataclass
@@ -156,6 +157,11 @@ class AtlasFSM:
         self._pred_history = deque(maxlen=self.config.lookahead_steps + 1)
         self._converge_count = 0  # consecutive sub-threshold prediction-error steps
 
+        # One-shot fire command: set to a copy of the intercept [dx, dy, dz]
+        # (turret-relative metres) when the FSM enters ENGAGING; returned and
+        # cleared by the controller via consume_fire_command(). See ADR-0013.
+        self._fire_command = None
+
         # Last absolute (pan-seam-unwrapped) angle commanded to each motor.
         # Exposed via commanded_aim for telemetry/introspection. The FCR no
         # longer reads this — it gates its lock on the turret's real aim from the
@@ -196,6 +202,20 @@ class AtlasFSM:
         """
         return (self._commanded_pan, self._commanded_tilt)
 
+    def consume_fire_command(self) -> list[float] | None:
+        """Return the pending fire command and clear it, or None if none pending.
+
+        The fire command is the intercept point [dx, dy, dz] (turret-relative
+        metres) the FSM committed to on entering ENGAGING. One-shot: the
+        controller calls this once per step after fsm.step(); it is returned
+        exactly once and is None on every subsequent call until the FSM
+        re-enters ENGAGING. The FSM spawns nothing — node launch is the
+        controller's job (keeps the FSM pure and unit-testable).
+        """
+        command = self._fire_command
+        self._fire_command = None
+        return command
+
     # --------------------------------------------------------- state handlers
 
     def _do_idle(self) -> None:
@@ -208,9 +228,12 @@ class AtlasFSM:
         reaches acquire_frames the cue (a world-frame [x, y, z] position) is
         stored as self._target and the FSM transitions to AIM.
 
-        A ground-hit cue takes precedence and sends the FSM to RESET.
+        A ground-hit or bullet-hit cue takes precedence and sends the FSM to RESET.
         """
-        if self.sensors.ground_hit_link.hit_this_step():
+        if (
+            self.sensors.ground_hit_link.hit_this_step()
+            or self.sensors.bullet_hit_link.hit_this_step()
+        ):
             self._transition(self.RESET)
             return
 
@@ -243,9 +266,13 @@ class AtlasFSM:
 
         Transitions to TRACK_PREDICT when ``fcr.is_locked()`` — the FCR has the
         target inside its narrow FOV cone (the design's "FCR beam finds the
-        target"). A ground-hit cue takes precedence and sends the FSM to RESET.
+        target"). A ground-hit or bullet-hit cue takes precedence and sends the
+        FSM to RESET.
         """
-        if self.sensors.ground_hit_link.hit_this_step():
+        if (
+            self.sensors.ground_hit_link.hit_this_step()
+            or self.sensors.bullet_hit_link.hit_this_step()
+        ):
             self._transition(self.RESET)
             return
 
@@ -280,9 +307,12 @@ class AtlasFSM:
              intercept is within max_range, the prediction is trustworthy: store
              it on self._intercept and transition to ENGAGING.
 
-        A ground-hit cue takes precedence and sends the FSM to RESET.
+        A ground-hit or bullet-hit cue takes precedence and sends the FSM to RESET.
         """
-        if self.sensors.ground_hit_link.hit_this_step():
+        if (
+            self.sensors.ground_hit_link.hit_this_step()
+            or self.sensors.bullet_hit_link.hit_this_step()
+        ):
             self._transition(self.RESET)
             return
 
@@ -323,23 +353,26 @@ class AtlasFSM:
         the "ready to fire" signal — there is no separate flag.
 
         Transitions to RESET when the attacker's ground-hit cue fires this step
-        (sensors.ground_hit_link) or the target leaves max_range. The ground hit
-        is never inferred from the track Z — the emitted cue is the only
-        ground-hit signal.
+        (sensors.ground_hit_link), the bullet-hit cue fires (sensors.bullet_hit_link,
+        projectile destroyed), or the target leaves max_range. The ground hit is
+        never inferred from the track Z — the emitted cue is the only ground-hit
+        signal.
 
         Precondition: self._intercept is not None (set by TRACK_PREDICT).
         """
         # Hold aim on the fixed intercept.
         self._aim_at(self._intercept)
 
-        # Exit on the authoritative ground-hit cue from the attacker, or when the
-        # target leaves the range envelope. Ground hits are NEVER inferred from
-        # the track Z here — the emitted cue is the only ground-hit signal.
-        # TODO(projectile-destroyed-cue): when the turret-weapon / bullet-hit cue
-        # is built, add a "projectile destroyed → RESET" exit here.
+        # Exit on the authoritative ground-hit cue from the attacker, on the
+        # bullet-hit cue (projectile destroyed — the bullet-hit link now provides
+        # the "projectile destroyed → RESET" exit), or when the target leaves the
+        # range envelope. Ground hits are NEVER inferred from the track Z here —
+        # the emitted cue is the only ground-hit signal.
         target_position = self.sensors.track_filter.get_position()
-        if self.sensors.ground_hit_link.hit_this_step() or not self._target_within_range(
-            target_position
+        if (
+            self.sensors.ground_hit_link.hit_this_step()
+            or self.sensors.bullet_hit_link.hit_this_step()
+            or not self._target_within_range(target_position)
         ):
             self._transition(self.RESET)
 
@@ -369,6 +402,7 @@ class AtlasFSM:
         self.sensors.cue_link.clear()
         self._target = None
         self._intercept = None
+        self._fire_command = None
         self._aim_entry_done = False
         self._converge_count = 0
         self._pred_history.clear()
@@ -557,3 +591,8 @@ class AtlasFSM:
             self._intercept = None
             self._converge_count = 0
             self._pred_history.clear()
+        elif new_state == self.ENGAGING:
+            # Commit the shot: hand the validated intercept to the controller
+            # exactly once. _intercept is guaranteed set — TRACK_PREDICT sets it
+            # immediately before taking this transition.
+            self._fire_command = list(self._intercept)

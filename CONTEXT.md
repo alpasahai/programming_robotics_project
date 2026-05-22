@@ -54,7 +54,16 @@ The turret destroys the incoming ball by firing a physical projectile (the Bulle
 
 ## Bullet
 
-The turret's fired projectile, defined by `AtlasBullet.proto`. A self-reporting `Robot` carrying a `bumper`-type `TouchSensor` and the `atlas_bullet_controller`; it detects its own collisions and publishes a hit via its `customData` field. Spawned dynamically by the turret supervisor at fire time and removed when the shot resolves. Distinct from the incoming ball (`Projectile`), which the turret aims *at*.
+The turret's fired projectile, defined by `AtlasBullet.proto` (DEF `ATLAS_BULLET`).
+A passive `Solid` — no controller, sensor, or radio — that the `atlas_controller`
+supervisor *recycles*, mirroring the incoming `Projectile`: one pre-placed node is
+parked out of range, teleported to the muzzle and launched (`setVelocity`) toward
+the intercept when the FSM enters `ENGAGING`, then parked again when the
+engagement resolves (the bullet struck the ball, the ball landed, or a flight-time
+timeout). It carries no hit sensor: the incoming `Projectile` is the single source
+of hit truth (it classifies a mid-air contact as a bullet hit by world-Z), and the
+attacker relays that as a bullet-hit pulse on channel 3. Distinct from the
+incoming ball (`Projectile`), which the turret aims *at*. See ADR-0013.
 
 ## Fire Command
 

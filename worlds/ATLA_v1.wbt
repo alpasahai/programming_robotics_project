@@ -10,8 +10,17 @@ EXTERNPROTO "../protos/Projectile.proto"
 EXTERNPROTO "../protos/AtlasTurret.proto"
 EXTERNPROTO "../protos/SearchRadar.proto"
 EXTERNPROTO "../protos/Attacker.proto"
+EXTERNPROTO "../protos/AtlasBullet.proto"
 
 WorldInfo {
+  contactProperties [
+    ContactProperties {
+      material1 "atlas_bullet"
+      material2 "default"
+      bounce 0
+      bounceVelocity 0
+    }
+  ]
 }
 Viewpoint {
   orientation 0.2017059124274153 -0.10059442497371916 -0.9742666403793321 4.046164701998812
@@ -35,6 +44,8 @@ DEF SEARCH_RADAR SearchRadar {
   mastHeight 2.5
 }
 DEF ATTACKER Attacker {
+}
+DEF ATLAS_BULLET AtlasBullet {
 }
 
 

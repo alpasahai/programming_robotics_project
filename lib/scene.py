@@ -13,3 +13,4 @@ literal is clearer than a shared constant.
 
 DEF_PROJECTILE = "PROJECTILE"  # the incoming ball (Projectile.proto)
 DEF_TURRET_BASE = "TURRET_BASE"  # the turret origin (AtlasTurret.proto)
+DEF_ATLAS_BULLET = "ATLAS_BULLET"  # the recycled turret bullet (see ADR-0013)

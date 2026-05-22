@@ -30,6 +30,9 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
   2. Predict — track_filter.predict()                      [sim-clock cadence]
   3. Fuse    — track_filter.update_fcr() when FCR is locked [sim-clock cadence]
   4. Decide  — fsm.step()                                  [event-driven state]
+  4a. Launch — bullet.launch() for a bullet armed last step [event-driven state]
+  4b. Fire   — fsm.consume_fire_command(), bullet.fire()    [event-driven state]
+  4c. Recycle — bullet.step(), bullet.recycle() on engagement end [event-driven]
   5. Report  — telemetry.report() (development instrument; no effect on control)
 """
 
@@ -45,7 +48,9 @@ from track_filter import TrackFilter
 from ballistic_trajectory_predictor import BallisticTrajectoryPredictor
 from fsm import AtlasFSM, SensorSuite, TurretHardware
 from telemetry import TrackTelemetry
-from scene import DEF_PROJECTILE
+from bullet_hit_link import BulletHitLink
+from bullet import Bullet, BulletConfig
+from scene import DEF_PROJECTILE, DEF_ATLAS_BULLET
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -78,6 +83,14 @@ TRACK_FILTER_R_FCR = 0.001    # FCR measurement noise variance (m²) — low, tr
 TRACK_FILTER_R_SEARCH = 0.1   # retained for constructor; update_search() removed
 TRACK_FILTER_Q = 0.01         # process noise scale — small for near-ballistic motion
 
+# --- Turret weapon (bullet) ---
+# v_max < (r_ball + r_bullet)/timestep ≈ 20 m/s at 32 ms (ODE is discrete — no
+# CCD — so a too-fast bullet tunnels through the ball). Tune in Webots.
+MUZZLE_SPEED_MPS = 18.0
+MUZZLE_OFFSET_M = 0.6           # spawn this far along the aim, clear of the turret
+BULLET_PARK_POSITION = [0.0, 0.0, -100.0]
+BULLET_MAX_LIFETIME_STEPS = 400  # safety: recycle a bullet that never resolves
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -108,6 +121,11 @@ receiver.enable(timestep)
 ground_hit_receiver = robot.getDevice("ATTACKER_GROUND_HIT_RECEIVER")
 ground_hit_receiver.enable(timestep)
 
+# Receiver for the bullet-hit pulse (channel 3). Enabled before the link is
+# constructed, matching the pattern above.
+bullet_hit_receiver = robot.getDevice("ATLAS_BULLET_HIT_RECEIVER")
+bullet_hit_receiver.enable(timestep)
+
 # --- Scene nodes ---
 projectile = robot.getFromDef(DEF_PROJECTILE)
 if projectile is None:
@@ -130,6 +148,20 @@ fcr = FireControlRadar(
 )
 cue_link = SearchRadarLink(receiver)
 ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
+bullet_hit_link = BulletHitLink(bullet_hit_receiver)
+
+bullet_node = robot.getFromDef(DEF_ATLAS_BULLET)
+if bullet_node is None:
+    raise RuntimeError(f"Could not find DEF {DEF_ATLAS_BULLET} in the world file.")
+bullet = Bullet(
+    bullet_node,
+    turret_position=turret_position,
+    config=BulletConfig(
+        muzzle_speed=MUZZLE_SPEED_MPS,
+        muzzle_offset_m=MUZZLE_OFFSET_M,
+        park_position=BULLET_PARK_POSITION,
+    ),
+)
 
 # --- State estimator ---
 # R_search is retained as a constructor parameter (TrackFilter still accepts it)
@@ -151,6 +183,7 @@ sensors = SensorSuite(
     track_filter=track_filter,
     ballistic_predictor=ballistic_predictor,
     ground_hit_link=ground_hit_link,
+    bullet_hit_link=bullet_hit_link,
 )
 hardware = TurretHardware(
     pan_motor=pan,
@@ -198,10 +231,17 @@ while robot.step(timestep) != -1:
     #    settles; fall back to 0.0 in that case.
     cue_link.update()
     ground_hit_link.update()
+    bullet_hit_link.update()
     if ground_hit_link.hit_this_step():
         log.info(
             "[ATLAS] ground-hit cue received: hit #%d at t=%.2fs",
             ground_hit_link.count,
+            robot.getTime(),
+        )
+    if bullet_hit_link.hit_this_step():
+        log.info(
+            "[ATLAS] bullet-hit cue received: hit #%d at t=%.2fs",
+            bullet_hit_link.count,
             robot.getTime(),
         )
     pan_actual = pan_sensor.getValue()
@@ -229,6 +269,40 @@ while robot.step(timestep) != -1:
 
     # 4. Decide [event-driven state] — advance FSM one step
     fsm.step()
+
+    # 4a. Launch — apply the launch velocity to a bullet armed last step. The
+    #     muzzle teleport issued by fire() has now been applied by robot.step(),
+    #     so setVelocity here is not wiped by a pending translation write
+    #     (two-phase launch — see Bullet.fire/launch and ADR-0013).
+    if bullet.is_launching:
+        bullet.launch()
+
+    # 4b. Fire — arm the recycled bullet when the FSM commits to a shot. One
+    #     bullet at a time: a fire command while armed/in flight is ignored.
+    fire_command = fsm.consume_fire_command()
+    if fire_command is not None:
+        if bullet.is_parked:
+            bullet.fire(fire_command)
+            log.info(
+                "FIRE — bullet armed toward intercept [%.3f, %.3f, %.3f]",
+                fire_command[0],
+                fire_command[1],
+                fire_command[2],
+            )
+        else:
+            log.warning("FIRE ignored — a bullet is still in flight")
+
+    # 4c. Recycle — park the bullet when the engagement ends: it struck the
+    #     ball (bullet-hit cue), the ball landed (ground-hit cue, shot missed),
+    #     or the flight-time safety timeout fired.
+    bullet.step()
+    if not bullet.is_parked and (
+        bullet_hit_link.hit_this_step()
+        or ground_hit_link.hit_this_step()
+        or bullet.age_steps >= BULLET_MAX_LIFETIME_STEPS
+    ):
+        log.info("RECYCLE — parking bullet (age=%d steps)", bullet.age_steps)
+        bullet.recycle()
 
     # 5. Report — per-step development telemetry (no effect on control)
     telemetry.report(
