@@ -19,6 +19,10 @@ PROTO AtlasTurret [
         name "ATTACKER_GROUND_HIT_RECEIVER"
         channel 2
       }
+      Receiver {
+        name "ATLAS_BULLET_HIT_RECEIVER"
+        channel 3
+      }
 
       HingeJoint {
         jointParameters HingeJointParameters {
