@@ -854,12 +854,18 @@ class _StubAimProvider:
     Args:
         ready_aim: The (pan, tilt) tuple returned by get_ready_aim(), or None to
             simulate the cold-start case (no estimate yet).
+
+    Attributes:
+        last_turret_position: The turret_position argument passed to the most
+            recent call of get_ready_aim(), or None if never called.
     """
 
     def __init__(self, ready_aim):
         self._ready_aim = ready_aim
+        self.last_turret_position = None
 
     def get_ready_aim(self, turret_position):
+        self.last_turret_position = turret_position
         return self._ready_aim
 
 
@@ -880,25 +886,30 @@ def make_idle_fsm():
 
 
 def test_idle_preaims_at_estimate(make_idle_fsm):
-    """_do_idle must command the provider's (pan, tilt) when an estimate exists."""
-    fsm = make_idle_fsm(idle_aim_provider=_StubAimProvider((1.234, 0.3)))
+    """_do_idle must command the provider's (pan, tilt) when an estimate exists,
+    and must pass hardware.turret_position to get_ready_aim."""
+    provider = _StubAimProvider((1.234, 0.3))
+    fsm = make_idle_fsm(idle_aim_provider=provider)
     fsm.step()
     pan, tilt = fsm.commanded_aim
     assert abs(pan - 1.234) < 1e-9
     assert abs(tilt - 0.3) < 1e-9
+    assert provider.last_turret_position == fsm.hardware.turret_position
 
 
 def test_idle_falls_back_when_no_estimate(make_idle_fsm):
-    """_do_idle must fall back to idle_tilt when provider returns None (cold start)."""
+    """_do_idle must fall back to idle_pan/idle_tilt when provider returns None (cold start)."""
     fsm = make_idle_fsm(idle_aim_provider=_StubAimProvider(None))
     fsm.step()
     pan, tilt = fsm.commanded_aim
+    assert abs(pan - fsm.config.idle_pan) < 1e-9
     assert abs(tilt - fsm.config.idle_tilt) < 1e-9
 
 
 def test_idle_fixed_beam_when_provider_absent(make_idle_fsm):
-    """_do_idle must command idle_tilt when no provider is wired (default None)."""
+    """_do_idle must command idle_pan/idle_tilt when no provider is wired (default None)."""
     fsm = make_idle_fsm()  # default None
     fsm.step()
     pan, tilt = fsm.commanded_aim
+    assert abs(pan - fsm.config.idle_pan) < 1e-9
     assert abs(tilt - fsm.config.idle_tilt) < 1e-9
