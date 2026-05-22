@@ -75,12 +75,19 @@ class AttackPredictor:
             self._predicted_sector = None
 
     def get_ready_aim(self):
-        """Return (pan, tilt) toward the predicted sector, or None (cold start).
+        """Return (pan, tilt) toward the predicted sector, or None.
+
+        Returns None during cold start AND when the model predicts a sector the
+        SectorMap has not discovered yet (the classifier's fixed class set spans
+        max_sectors, but only the sectors actually observed have a known bearing).
+        In both cases the FSM IDLE state falls back to its fixed idle beam.
 
         ``pan`` is the predicted sector's discovered centre bearing (the turret's
         pan convention is pan = atan2(dx, dy), the same value SectorMap stores);
         ``tilt`` is the configured pre-aim elevation.
         """
         if self._predicted_sector is None:
+            return None
+        if self._predicted_sector >= len(self._sector_map):
             return None
         return (self._sector_map.bearing(self._predicted_sector), self._pre_aim_tilt)

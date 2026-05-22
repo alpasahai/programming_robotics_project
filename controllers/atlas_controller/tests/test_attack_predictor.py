@@ -69,6 +69,42 @@ def test_ready_aim_uses_predicted_sector_bearing():
     assert tilt == PRE_AIM_TILT
 
 
+def test_ready_aim_none_when_predicted_sector_undiscovered():
+    """If the model predicts a class the SectorMap hasn't discovered yet,
+    get_ready_aim() returns None (fall back to fixed beam) — never IndexErrors."""
+    sm = SectorMap(tol_rad=0.3)
+    model = StubModel(prediction=5)   # class 5 is in np.arange(8) but never observed
+    p = AttackPredictor(model, sm, max_sectors=MAX_SECTORS, pre_aim_tilt=PRE_AIM_TILT)
+    p.observe(0.0, 0.0)   # discovers sector 0
+    p.observe(1.5, 1.0)   # discovers sector 1 → model now predicts class 5 (undiscovered)
+    assert p.predicted_sector == 5            # property still reports the raw argmax
+    assert p.get_ready_aim() is None          # but the FSM-facing aim is safely None
+
+
+def test_get_ready_aim_never_raises_over_full_drifting_run():
+    """End-to-end with the REAL classifier + SectorMap over the drifting pattern:
+    get_ready_aim() must never raise and must only ever return a discovered
+    sector's bearing (regression for the undiscovered-sector IndexError)."""
+    rule_a = PatternRule(tour=[0, 1], mean_burst=[5, 5], deviation_prob=0.05)
+    rule_b = PatternRule(tour=[2, 3], mean_burst=[5, 5], deviation_prob=0.05)
+    sectors = list(itertools.islice(
+        launch_sequence([(rule_a, 150), (rule_b, None)], np.random.default_rng(1)), 320))
+    bearings = _bearings_for(sectors)
+
+    sm = SectorMap(tol_rad=0.3, max_clusters=MAX_SECTORS)
+    model = SGDClassifier(loss="log_loss", random_state=0)
+    p = AttackPredictor(model, sm, max_sectors=MAX_SECTORS, pre_aim_tilt=PRE_AIM_TILT)
+
+    for i, b in enumerate(bearings):
+        aim = p.get_ready_aim()   # must NEVER raise
+        if aim is not None:
+            pan, tilt = aim
+            assert tilt == PRE_AIM_TILT
+            # pan must be an actually-discovered centre
+            assert any(abs(pan - sm.bearing(j)) < 1e-12 for j in range(len(sm)))
+        p.observe(b, float(i))
+
+
 def test_beats_mode_baseline_on_structured_pattern():
     """A real SGD learner predicts next sector better than always-predict-mode."""
     rule = PatternRule(tour=[0, 1, 2], mean_burst=[5, 2, 4], deviation_prob=0.1)
