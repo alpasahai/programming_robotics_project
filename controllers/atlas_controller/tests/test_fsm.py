@@ -56,6 +56,7 @@ def _build_fsm(
     bullet_hit_link=None,
     turret_position=None,
     config=None,
+    idle_aim_provider=None,
 ):
     """Build an AtlasFSM wired to stubs, returning (fsm, pan_motor, tilt_motor)."""
     if track_filter is None:
@@ -80,6 +81,7 @@ def _build_fsm(
         ballistic_predictor=ballistic_predictor,
         ground_hit_link=ground_hit_link,
         bullet_hit_link=bullet_hit_link,
+        idle_aim_provider=idle_aim_provider,
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -840,3 +842,63 @@ def test_no_bullet_hit_keeps_engaging():
     fsm.consume_fire_command()
     fsm.step()
     assert fsm.state == AtlasFSM.ENGAGING
+
+
+# ---------------------------------------------------------------------------
+# IDLE pre-aim via idle_aim_provider
+# ---------------------------------------------------------------------------
+
+class _StubAimProvider:
+    """Minimal aim-provider stub that returns a fixed (pan, tilt) or None.
+
+    Args:
+        ready_aim: The (pan, tilt) tuple returned by get_ready_aim(), or None to
+            simulate the cold-start case (no estimate yet).
+    """
+
+    def __init__(self, ready_aim):
+        self._ready_aim = ready_aim
+
+    def get_ready_aim(self, turret_position):
+        return self._ready_aim
+
+
+@pytest.fixture
+def make_idle_fsm():
+    """Factory fixture: returns a callable that builds an IDLE AtlasFSM.
+
+    The callable accepts an optional ``idle_aim_provider`` keyword argument
+    (default None) and returns an AtlasFSM in IDLE state wired to recording
+    motor stubs so that ``fsm.commanded_aim`` reflects the angles issued by
+    _do_idle.
+    """
+    def _factory(*, idle_aim_provider=None):
+        fsm, _, _ = _build_fsm(idle_aim_provider=idle_aim_provider)
+        return fsm
+
+    return _factory
+
+
+def test_idle_preaims_at_estimate(make_idle_fsm):
+    """_do_idle must command the provider's (pan, tilt) when an estimate exists."""
+    fsm = make_idle_fsm(idle_aim_provider=_StubAimProvider((1.234, 0.3)))
+    fsm.step()
+    pan, tilt = fsm.commanded_aim
+    assert abs(pan - 1.234) < 1e-9
+    assert abs(tilt - 0.3) < 1e-9
+
+
+def test_idle_falls_back_when_no_estimate(make_idle_fsm):
+    """_do_idle must fall back to idle_tilt when provider returns None (cold start)."""
+    fsm = make_idle_fsm(idle_aim_provider=_StubAimProvider(None))
+    fsm.step()
+    pan, tilt = fsm.commanded_aim
+    assert abs(tilt - fsm.config.idle_tilt) < 1e-9
+
+
+def test_idle_fixed_beam_when_provider_absent(make_idle_fsm):
+    """_do_idle must command idle_tilt when no provider is wired (default None)."""
+    fsm = make_idle_fsm()  # default None
+    fsm.step()
+    pan, tilt = fsm.commanded_aim
+    assert abs(tilt - fsm.config.idle_tilt) < 1e-9

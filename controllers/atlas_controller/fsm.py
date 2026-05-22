@@ -28,6 +28,11 @@ class SensorSuite:
     ground_hit_link: object  # AttackerGroundHitLink — attacker ground-hit pulse
     bullet_hit_link: object  # BulletHitLink — attacker bullet-hit (projectile-destroyed) pulse
 
+    # Optional Think-layer provider of a pre-aim suggestion for IDLE.
+    # get_ready_aim(turret_position) -> (pan, tilt) | None. Default None keeps
+    # the original fixed-beam IDLE behaviour (and existing tests) working.
+    idle_aim_provider: object = None
+
 
 @dataclass
 class TurretHardware:
@@ -221,12 +226,17 @@ class AtlasFSM:
     def _do_idle(self) -> None:
         """Execute one timestep of IDLE state logic.
 
-        Holds the turret at the fixed (idle_pan, idle_tilt) beam direction —
-        there is no pan sweep. Simultaneously reads the latest Search Radar cue
-        from the cue link and counts consecutive steps that carry a non-None
-        cue. Any step with no cue resets the counter to zero. When the count
-        reaches acquire_frames the cue (a world-frame [x, y, z] position) is
-        stored as self._target and the FSM transitions to AIM.
+        Pre-aims using ``sensors.idle_aim_provider.get_ready_aim(turret_position)``
+        when a provider is wired and the estimator has an estimate; falls back to
+        the fixed (idle_pan, idle_tilt) beam direction when no provider is set or
+        the provider returns None (cold start, no estimate yet). There is no pan
+        sweep in either case.
+
+        Simultaneously reads the latest Search Radar cue from the cue link and
+        counts consecutive steps that carry a non-None cue. Any step with no cue
+        resets the counter to zero. When the count reaches acquire_frames the cue
+        (a world-frame [x, y, z] position) is stored as self._target and the FSM
+        transitions to AIM.
 
         A ground-hit or bullet-hit cue takes precedence and sends the FSM to RESET.
         """
@@ -237,8 +247,18 @@ class AtlasFSM:
             self._transition(self.RESET)
             return
 
-        # Hold the fixed idle direction.
-        self._command_angles(self.config.idle_pan, self.config.idle_tilt)
+        # Pre-aim at the estimated launch origin (Layer-3 suggestion); fall back
+        # to the fixed idle beam before any estimate exists or when no provider
+        # is wired. The FSM stays pure: it consumes a (pan, tilt) value.
+        ready_aim = None
+        if self.sensors.idle_aim_provider is not None:
+            ready_aim = self.sensors.idle_aim_provider.get_ready_aim(
+                self.hardware.turret_position
+            )
+        if ready_aim is not None:
+            self._command_angles(ready_aim[0], ready_aim[1])
+        else:
+            self._command_angles(self.config.idle_pan, self.config.idle_tilt)
 
         cue = self.sensors.cue_link.get_cue()
         if cue is not None:
