@@ -37,6 +37,7 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
 """
 
 import math
+import os
 
 from controller import Supervisor
 from sklearn.linear_model import SGDClassifier
@@ -56,6 +57,7 @@ from telemetry import TrackTelemetry
 from bullet_hit_link import BulletHitLink
 from bullet import Bullet, BulletConfig
 from scene import DEF_PROJECTILE, DEF_ATLAS_BULLET
+from scoreboard import Scoreboard
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -166,6 +168,14 @@ cue_link = SearchRadarLink(receiver)
 ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
 bullet_hit_link = BulletHitLink(bullet_hit_receiver)
 
+# A/B switch for measuring the adaptive feature's value: ATLAS_PREAIM=off runs
+# the IDLE state on its fixed beam (no predictor) so shoot-down rate can be
+# compared against pre-aim on. Default: on.
+preaim_enabled = os.environ.get("ATLAS_PREAIM", "on").strip().lower() not in (
+    "off", "0", "false", "no")
+log.info("[ATLAS] pre-aim %s",
+         "ENABLED (adaptive)" if preaim_enabled else "DISABLED (fixed-beam baseline)")
+
 # Adaptive launch-direction learner (Think layer). Online logistic regression
 # over self-discovered sectors; no dataset, no serialized model.
 attack_predictor = AttackPredictor(
@@ -214,7 +224,7 @@ sensors = SensorSuite(
     ballistic_predictor=ballistic_predictor,
     ground_hit_link=ground_hit_link,
     bullet_hit_link=bullet_hit_link,
-    attack_predictor=attack_predictor,
+    attack_predictor=attack_predictor if preaim_enabled else None,
 )
 hardware = TurretHardware(
     pan_motor=pan,
@@ -249,6 +259,10 @@ step_count = 0  # simulation steps elapsed — shown in telemetry
 # step later inside fsm.step(). The first engagement contributes no observation
 # (cold start → IDLE holds the fixed beam) — that is correct.
 launch_latch = LaunchLatch()
+
+# Operational outcome tally (issue #45): projectiles shot down vs ground hits.
+# Fed by the resolution cues below; logged once per resolved engagement.
+scoreboard = Scoreboard()
 
 # Last sector we announced a pre-rotation toward, so the log only fires when the
 # pre-rotation target actually changes (not every observed launch).
@@ -288,6 +302,12 @@ while robot.step(timestep) != -1:
             bullet_hit_link.count,
             robot.getTime(),
         )
+    if bullet_hit_link.hit_this_step():
+        scoreboard.record_shoot_down()
+    if ground_hit_link.hit_this_step():
+        scoreboard.record_ground_hit()
+    if bullet_hit_link.hit_this_step() or ground_hit_link.hit_this_step():
+        log.info("[ATLAS] %s", scoreboard.summary())
     pan_actual = pan_sensor.getValue()
     tilt_actual = tilt_sensor.getValue()
     if math.isnan(pan_actual):
