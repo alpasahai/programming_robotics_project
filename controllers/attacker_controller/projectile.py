@@ -69,6 +69,7 @@ class Projectile:
         config: ProjectileConfig | None = None,
         on_ground_hit=None,
         on_bullet_hit=None,
+        select_launch=None,
     ):
         """
         Args:
@@ -79,12 +80,22 @@ class Projectile:
             on_bullet_hit: Optional callable(count:int) fired when the ball is
                            struck mid-air (by the turret bullet). Dormant until
                            the bullet exists.
+            select_launch: Optional callable () -> (spawn_position, launch_velocity),
+                           invoked at the top of spawn() to choose where the NEXT
+                           ball launches from. None → the fixed config is reused
+                           every spawn (original behaviour). The attacker uses this
+                           to jitter/drift the launch point.
         """
         self.config = config if config is not None else ProjectileConfig()
         self._node = node
         self._translation = node.getField("translation")
         self._on_ground_hit = on_ground_hit
         self._on_bullet_hit = on_bullet_hit
+        # Optional callable () -> (spawn_position, launch_velocity), invoked at
+        # the top of spawn() to choose where the NEXT ball launches from. None →
+        # the fixed config is reused every spawn (original behaviour). The
+        # attacker uses this to jitter/drift the launch point.
+        self._select_launch = select_launch
         self._state = _State.DESPAWNED
         self._despawn_time_ms = 0
         self._airborne = False  # has the ball cleared the floor since spawn?
@@ -99,7 +110,16 @@ class Projectile:
         we are trying to apply, so the ball never launches. Physics is reset in
         _despawn() instead (a different timestep), leaving the parked body clean
         before we relaunch it.
+
+        If a select_launch callable was provided at construction, it is invoked
+        first to obtain the (spawn_position, launch_velocity) for this launch.
+        This lets the attacker jitter/drift the nominal launch point without
+        mutating the ProjectileConfig directly.
         """
+        if self._select_launch is not None:
+            spawn_position, launch_velocity = self._select_launch()
+            self.config.spawn_position = spawn_position
+            self.config.launch_velocity = launch_velocity
         self._translation.setSFVec3f(self.config.spawn_position)
         self._node.setVelocity(self.config.launch_velocity)
         self._airborne = False

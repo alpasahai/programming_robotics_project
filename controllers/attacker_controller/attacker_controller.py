@@ -17,6 +17,7 @@ it via the supervisor API and getFromDef, never via a node handle on itself.
 
 import struct
 
+import numpy as np
 from controller import Supervisor
 
 from atlas_logging import configure
@@ -49,6 +50,30 @@ config = ProjectileConfig(
     floor_contact_z_m=0.1,
     respawn_delay_ms=2000,
 )
+
+# --- Launch point: roughly static, with small per-launch jitter (and a slow
+#     drift). The nominal point and jitter are the attacker's ground truth and
+#     are NEVER sent to ATLAS — it estimates the launch origin from noisy radar.
+NOMINAL_LAUNCH_POINT = [0.0, -10.0, 0.5]
+LAUNCH_JITTER_M = 0.3            # zero-mean per-axis jitter (x, y; z kept fixed)
+LAUNCH_DRIFT_PER_SHOT = [0.02, 0.0, 0.0]  # slow nominal drift per launch (SHOULD)
+FIXED_LAUNCH_VELOCITY = [0, 2, 10, 0, 0, 0]
+
+_launch_rng = np.random.default_rng(20260522)
+_nominal = list(NOMINAL_LAUNCH_POINT)
+
+
+def _next_launch():
+    """select_launch hook: jitter (and drift) the nominal launch point."""
+    global _nominal
+    point = [
+        _nominal[0] + _launch_rng.normal(0.0, LAUNCH_JITTER_M),
+        _nominal[1] + _launch_rng.normal(0.0, LAUNCH_JITTER_M),
+        _nominal[2],
+    ]
+    _nominal = [_nominal[i] + LAUNCH_DRIFT_PER_SHOT[i] for i in range(3)]
+    log.info("[ATTACKER] launching from ~%s at t=%.2fs", [round(p, 2) for p in point], robot.getTime())
+    return point, list(FIXED_LAUNCH_VELOCITY)
 
 
 def on_ground_hit(count):
@@ -86,6 +111,7 @@ projectile = Projectile(
     config,
     on_ground_hit=on_ground_hit,
     on_bullet_hit=on_bullet_hit,
+    select_launch=_next_launch,
 )
 
 log.info("ATTACKER CONTROLLER STARTED — spawning first projectile")
