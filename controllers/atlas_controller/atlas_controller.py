@@ -52,6 +52,7 @@ from bullet_hit_link import BulletHitLink
 from bullet import Bullet, BulletConfig
 from scene import DEF_PROJECTILE, DEF_ATLAS_BULLET
 from launch_point_estimator import LaunchPointEstimator
+from launch_observation_gate import LaunchObservationGate
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -154,6 +155,7 @@ cue_link = SearchRadarLink(receiver)
 ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
 bullet_hit_link = BulletHitLink(bullet_hit_receiver)
 launch_point_estimator = LaunchPointEstimator(alpha=LAUNCH_POINT_ALPHA)
+launch_observation_gate = LaunchObservationGate()
 
 bullet_node = robot.getFromDef(DEF_ATLAS_BULLET)
 if bullet_node is None:
@@ -216,13 +218,6 @@ telemetry.log_legend()
 
 step_count = 0  # simulation steps elapsed — shown in telemetry
 
-# A launch is the FIRST radar acquisition after the previous projectile
-# resolved. estimator_armed re-arms on each resolution cue so each engagement
-# yields exactly one launch observation (debounces mid-flight dropouts).
-# Initialised False so the cold-start (first engagement) contributes no
-# observation; the turret falls back to the fixed idle beam (ADR-0014).
-estimator_armed = False
-
 # ---------------------------------------------------------------------------
 # Main loop
 #
@@ -258,27 +253,26 @@ while robot.step(timestep) != -1:
             robot.getTime(),
         )
 
-    # Launch-origin observation: on the resolution step (hit received) we ONLY
-    # arm the latch — cue_link still holds the stale impact/mid-flight position
-    # and fsm.step() → RESET → cue_link.clear() has not run yet. On the next
+    # Launch-origin observation: on the resolution step (hit received) the gate
+    # arms — cue_link still holds the stale impact/mid-flight position and
+    # fsm.step() → RESET → cue_link.clear() has not run yet. On the next
     # (non-resolution) step the cue_link delivers the first FRESH position after
     # relaunch, which is close to the true launch origin. Cold-start (first
-    # engagement, estimator_armed=False) contributes no observation; the turret
-    # falls back to the fixed idle beam (ADR-0014). Done before fsm.step() so
-    # IDLE pre-aims with the freshest estimate.
-    if ground_hit_link.hit_this_step() or bullet_hit_link.hit_this_step():
-        estimator_armed = True          # arm; next FRESH cue after RESET ≈ launch origin
-    else:
-        cue = cue_link.get_cue()
-        if estimator_armed and cue is not None:
-            launch_point_estimator.observe(cue)
-            estimator_armed = False
-            log.info(
-                "[ATLAS] launch observed at %s; estimate now %s (n=%d)",
-                [round(c, 2) for c in cue],
-                [round(v, 2) for v in launch_point_estimator.get_estimate()],
-                launch_point_estimator.samples,
-            )
+    # engagement) contributes no observation; the turret falls back to the fixed
+    # idle beam (ADR-0014). Done before fsm.step() so IDLE pre-aims with the
+    # freshest estimate.
+    obs = launch_observation_gate.observation(
+        resolved=ground_hit_link.hit_this_step() or bullet_hit_link.hit_this_step(),
+        cue=cue_link.get_cue(),
+    )
+    if obs is not None:
+        launch_point_estimator.observe(obs)
+        log.info(
+            "[ATLAS] launch observed at %s; estimate now %s (n=%d)",
+            [round(c, 2) for c in obs],
+            [round(v, 2) for v in launch_point_estimator.get_estimate()],
+            launch_point_estimator.samples,
+        )
 
     pan_actual = pan_sensor.getValue()
     tilt_actual = tilt_sensor.getValue()

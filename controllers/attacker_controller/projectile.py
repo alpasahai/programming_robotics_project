@@ -112,9 +112,9 @@ class Projectile:
         before we relaunch it.
 
         If a select_launch callable was provided at construction, it is invoked
-        first to obtain the (spawn_position, launch_velocity) for this launch.
-        This lets the attacker jitter/drift the nominal launch point without
-        mutating the ProjectileConfig directly.
+        first to obtain the (spawn_position, launch_velocity) for this launch,
+        and those values are written into self.config.spawn_position and
+        self.config.launch_velocity before the ball is teleported and launched.
         """
         if self._select_launch is not None:
             spawn_position, launch_velocity = self._select_launch()
