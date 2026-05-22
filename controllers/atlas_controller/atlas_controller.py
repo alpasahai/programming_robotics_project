@@ -37,10 +37,16 @@ Execution order each step (per ADR-0003 continuous fusion and the FSM plan):
 """
 
 import math
+import os
 
 from controller import Supervisor
+from sklearn.linear_model import SGDClassifier
 
-from atlas_logging import configure
+from atlas_logging import configure, configure_scoreboard
+from sector_map import SectorMap
+from attack_predictor import AttackPredictor
+from preaim_monitor import PreAimMonitor
+from launch_latch import LaunchLatch
 from fire_control_radar import FireControlRadar
 from search_radar_link import SearchRadarLink
 from attacker_ground_hit_link import AttackerGroundHitLink
@@ -51,6 +57,7 @@ from telemetry import TrackTelemetry
 from bullet_hit_link import BulletHitLink
 from bullet import Bullet, BulletConfig
 from scene import DEF_PROJECTILE, DEF_ATLAS_BULLET
+from scoreboard import Scoreboard
 
 # ---------------------------------------------------------------------------
 # Telemetry logging
@@ -63,6 +70,12 @@ from scene import DEF_PROJECTILE, DEF_ATLAS_BULLET
 # ---------------------------------------------------------------------------
 
 log = configure("AtlasController", log_file="atlas_telemetry.log")
+
+# Dedicated scoreboard log stream (its own file atlas_score.log + [SCORE] console
+# tag, kept out of the main controller log). Level/visibility is controlled
+# centrally from lib/atlas_logging.py (the "AtlasScore" key) — set it to
+# "CRITICAL" there, or export ATLASSCORE_LOG_LEVEL, to turn scoreboard logging off.
+score_log = configure_scoreboard()
 
 # ---------------------------------------------------------------------------
 # Tuning constants
@@ -90,6 +103,17 @@ MUZZLE_SPEED_MPS = 18.0
 MUZZLE_OFFSET_M = 0.6           # spawn this far along the aim, clear of the turret
 BULLET_PARK_POSITION = [0.0, 0.0, -100.0]
 BULLET_MAX_LIFETIME_STEPS = 400  # safety: recycle a bullet that never resolves
+
+# --- Adaptive launch-direction learner ---
+# The Search Radar position noise (≈0.2 m, see search_radar_controller) at the
+# ~10 m launch range subtends a small bearing noise; the sector-clustering
+# tolerance is a few × that, comfortably below the spacing between real sectors.
+# Derived, not hand-tuned.
+SEARCH_RADAR_NOISE_STD_M = 0.2
+NOMINAL_LAUNCH_RANGE_M = 10.0
+SECTOR_TOL_RAD = 4.0 * SEARCH_RADAR_NOISE_STD_M / NOMINAL_LAUNCH_RANGE_M  # ≈0.08 rad
+MAX_SECTORS = 8                 # capacity bound (fixed feature width / class set)
+PRE_AIM_TILT_RAD = 0.3          # elevation held while pre-aiming at a sector
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -150,6 +174,30 @@ cue_link = SearchRadarLink(receiver)
 ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
 bullet_hit_link = BulletHitLink(bullet_hit_receiver)
 
+# A/B switch for measuring the adaptive feature's value: ATLAS_PREAIM=off runs
+# the IDLE state on its fixed beam (no predictor) so shoot-down rate can be
+# compared against pre-aim on. Default: on.
+preaim_enabled = os.environ.get("ATLAS_PREAIM", "on").strip().lower() not in (
+    "off", "0", "false", "no")
+log.info("[ATLAS] pre-aim %s",
+         "ENABLED (adaptive)" if preaim_enabled else "DISABLED (fixed-beam baseline)")
+score_log.info("pre-aim %s",
+               "ENABLED (adaptive)" if preaim_enabled else "DISABLED (fixed-beam baseline)")
+
+# Adaptive launch-direction learner (Think layer). Online logistic regression
+# over self-discovered sectors; no dataset, no serialized model.
+attack_predictor = AttackPredictor(
+    model=SGDClassifier(loss="log_loss", random_state=0),
+    sector_map=SectorMap(tol_rad=SECTOR_TOL_RAD, max_clusters=MAX_SECTORS),
+    max_sectors=MAX_SECTORS,
+    pre_aim_tilt=PRE_AIM_TILT_RAD,
+)
+
+# Pre-aim observability: scores each launch's predicted-vs-actual sector for the
+# console log (HIT/MISS, angular error, running accuracy vs a predict-last
+# baseline). Pure telemetry — no control influence.
+preaim_monitor = PreAimMonitor()
+
 bullet_node = robot.getFromDef(DEF_ATLAS_BULLET)
 if bullet_node is None:
     raise RuntimeError(f"Could not find DEF {DEF_ATLAS_BULLET} in the world file.")
@@ -184,6 +232,7 @@ sensors = SensorSuite(
     ballistic_predictor=ballistic_predictor,
     ground_hit_link=ground_hit_link,
     bullet_hit_link=bullet_hit_link,
+    attack_predictor=attack_predictor if preaim_enabled else None,
 )
 hardware = TurretHardware(
     pan_motor=pan,
@@ -209,6 +258,23 @@ telemetry = TrackTelemetry(
 telemetry.log_legend()
 
 step_count = 0  # simulation steps elapsed — shown in telemetry
+
+# Launch observation gating: a launch is the first FRESH radar acquisition AFTER
+# the previous projectile resolved. LaunchLatch re-arms on each resolution cue
+# (ground/bullet hit) and yields exactly one observation per engagement — the
+# first non-None cue AFTER it has seen the cue go None (RESET cleared it). This
+# avoids consuming the stale mid-flight/impact cue, which RESET clears only a
+# step later inside fsm.step(). The first engagement contributes no observation
+# (cold start → IDLE holds the fixed beam) — that is correct.
+launch_latch = LaunchLatch()
+
+# Operational outcome tally (issue #45): projectiles shot down vs ground hits.
+# Fed by the resolution cues below; logged once per resolved engagement.
+scoreboard = Scoreboard()
+
+# Last sector we announced a pre-rotation toward, so the log only fires when the
+# pre-rotation target actually changes (not every observed launch).
+last_prerotate_sector = None
 
 # ---------------------------------------------------------------------------
 # Main loop
@@ -244,6 +310,12 @@ while robot.step(timestep) != -1:
             bullet_hit_link.count,
             robot.getTime(),
         )
+    if bullet_hit_link.hit_this_step():
+        scoreboard.record_shoot_down()
+    if ground_hit_link.hit_this_step():
+        scoreboard.record_ground_hit()
+    if bullet_hit_link.hit_this_step() or ground_hit_link.hit_this_step():
+        score_log.info("t=%.1fs %s", robot.getTime(), scoreboard.summary())
     pan_actual = pan_sensor.getValue()
     tilt_actual = tilt_sensor.getValue()
     if math.isnan(pan_actual):
@@ -266,6 +338,54 @@ while robot.step(timestep) != -1:
     fcr_pos = fcr.get_target_position()
     if fcr_pos is not None:
         track_filter.update_fcr(fcr_pos)
+
+    # 3b. Adaptive launcher observation (radar-only, segmented by resolution
+    # cues). LaunchLatch yields the first FRESH cue after the previous
+    # engagement's cue was cleared (the new projectile's earliest acquisition,
+    # ≈ its launch sector) — never the resolved projectile's stale in-flight cue.
+    # Fed before fsm.step() so IDLE pre-aims with the freshest prediction.
+    observed_cue = launch_latch.update(
+        resolved=ground_hit_link.hit_this_step() or bullet_hit_link.hit_this_step(),
+        cue=cue_link.get_cue(),
+    )
+    if observed_cue is not None:
+        rel_x = observed_cue[0] - turret_position[0]
+        rel_y = observed_cue[1] - turret_position[1]
+        launch_bearing = math.atan2(rel_x, rel_y)  # pan convention
+
+        # Score the pre-aim we were holding for THIS launch (captured before the
+        # online update changes the prediction), then learn from the launch.
+        predicted_before = attack_predictor.predicted_sector
+        ready_before = attack_predictor.get_ready_aim()
+        predicted_bearing = None if ready_before is None else ready_before[0]
+        actual_sector = attack_predictor.observe(launch_bearing, robot.getTime())
+        preaim_monitor.record(predicted_before, actual_sector,
+                              predicted_bearing, launch_bearing)
+
+        if predicted_before is None:
+            log.info(
+                "[ATLAS] launch from sector %d (%.1f°) — cold start, no pre-aim yet | %s",
+                actual_sector, math.degrees(launch_bearing), preaim_monitor.summary(),
+            )
+        else:
+            hit = "HIT" if predicted_before == actual_sector else "MISS"
+            err_deg = preaim_monitor.last_error_deg
+            err_str = "n/a" if err_deg is None else "%.1f°" % err_deg
+            log.info(
+                "[ATLAS] launch from sector %d (%.1f°); pre-aimed sector %d (%s, err %s) | %s",
+                actual_sector, math.degrees(launch_bearing),
+                predicted_before, hit, err_str, preaim_monitor.summary(),
+            )
+
+        # Announce a change in the pre-rotation target for the NEXT launch.
+        next_aim = attack_predictor.get_ready_aim()
+        next_sector = attack_predictor.predicted_sector
+        if next_aim is not None and next_sector != last_prerotate_sector:
+            log.info(
+                "[ATLAS] pre-rotating toward sector %d (bearing %.1f°) for next launch",
+                next_sector, math.degrees(next_aim[0]),
+            )
+            last_prerotate_sector = next_sector
 
     # 4. Decide [event-driven state] — advance FSM one step
     fsm.step()

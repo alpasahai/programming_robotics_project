@@ -27,6 +27,10 @@ class SensorSuite:
     ballistic_predictor: object  # BallisticTrajectoryPredictor
     ground_hit_link: object  # AttackerGroundHitLink — attacker ground-hit pulse
     bullet_hit_link: object  # BulletHitLink — attacker bullet-hit (projectile-destroyed) pulse
+    # Optional Think-layer predictor providing a pre-aim suggestion for IDLE.
+    # get_ready_aim() -> (pan, tilt) | None. Default None keeps the original
+    # fixed-beam IDLE behaviour (and existing tests) working.
+    attack_predictor: object = None
 
 
 @dataclass
@@ -221,7 +225,9 @@ class AtlasFSM:
     def _do_idle(self) -> None:
         """Execute one timestep of IDLE state logic.
 
-        Holds the turret at the fixed (idle_pan, idle_tilt) beam direction —
+        Pre-aims at the sector the AttackPredictor expects next (a Layer-3
+        strategic suggestion via get_ready_aim()) when one is available; else
+        holds the turret at the fixed (idle_pan, idle_tilt) beam direction —
         there is no pan sweep. Simultaneously reads the latest Search Radar cue
         from the cue link and counts consecutive steps that carry a non-None
         cue. Any step with no cue resets the counter to zero. When the count
@@ -237,8 +243,17 @@ class AtlasFSM:
             self._transition(self.RESET)
             return
 
-        # Hold the fixed idle direction.
-        self._command_angles(self.config.idle_pan, self.config.idle_tilt)
+        # Pre-aim at the sector the AttackPredictor expects next (Layer-3
+        # strategic suggestion); fall back to the fixed idle beam when there is
+        # no prediction (cold start) or no predictor wired. The FSM stays pure:
+        # it consumes a (pan, tilt) value, not a model.
+        ready_aim = None
+        if self.sensors.attack_predictor is not None:
+            ready_aim = self.sensors.attack_predictor.get_ready_aim()
+        if ready_aim is not None:
+            self._command_angles(ready_aim[0], ready_aim[1])
+        else:
+            self._command_angles(self.config.idle_pan, self.config.idle_tilt)
 
         cue = self.sensors.cue_link.get_cue()
         if cue is not None:

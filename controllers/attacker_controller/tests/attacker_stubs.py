@@ -30,6 +30,7 @@ class StubProjectileNode:
         self.contacts = []
         self.translation_field = StubField()
         self.set_velocity_calls = []
+        self.last_velocity = None
         self.reset_physics_calls = 0
 
     def getField(self, name):
@@ -40,6 +41,7 @@ class StubProjectileNode:
         return self.contacts
 
     def setVelocity(self, velocity):
+        self.last_velocity = list(velocity)
         self.set_velocity_calls.append(list(velocity))
 
     def resetPhysics(self):

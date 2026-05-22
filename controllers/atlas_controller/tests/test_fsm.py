@@ -56,6 +56,7 @@ def _build_fsm(
     bullet_hit_link=None,
     turret_position=None,
     config=None,
+    attack_predictor=None,
 ):
     """Build an AtlasFSM wired to stubs, returning (fsm, pan_motor, tilt_motor)."""
     if track_filter is None:
@@ -80,6 +81,7 @@ def _build_fsm(
         ballistic_predictor=ballistic_predictor,
         ground_hit_link=ground_hit_link,
         bullet_hit_link=bullet_hit_link,
+        attack_predictor=attack_predictor,
     )
     hardware = TurretHardware(
         pan_motor=pan_motor,
@@ -123,6 +125,46 @@ def test_idle_does_not_sweep():
     first = pan.position
     fsm.step()
     assert pan.position == pytest.approx(first)
+
+
+# ---------------------------------------------------------------------------
+# IDLE — pre-aim at the predicted launch sector (AttackPredictor)
+# ---------------------------------------------------------------------------
+
+class _StubPredictor:
+    """Minimal AttackPredictor stub returning a fixed ready-aim (or None)."""
+
+    def __init__(self, ready_aim):
+        self._ready_aim = ready_aim
+
+    def get_ready_aim(self):
+        return self._ready_aim
+
+
+def test_idle_preaims_at_predicted_sector_bearing():
+    """When the predictor returns a ready-aim, IDLE commands that pan/tilt."""
+    fsm, pan, tilt = _build_fsm(attack_predictor=_StubPredictor((1.234, 0.3)))
+    fsm.step()  # IDLE
+    assert pan.position == pytest.approx(1.234)
+    assert tilt.position == pytest.approx(0.3)
+
+
+def test_idle_falls_back_to_fixed_beam_when_no_prediction():
+    """No prediction → IDLE holds the configured idle_pan/idle_tilt."""
+    config = FSMConfig(idle_pan=0.5, idle_tilt=0.2)
+    fsm, pan, tilt = _build_fsm(attack_predictor=_StubPredictor(None), config=config)
+    fsm.step()
+    assert pan.position == pytest.approx(config.idle_pan)
+    assert tilt.position == pytest.approx(config.idle_tilt)
+
+
+def test_idle_fixed_beam_when_predictor_absent():
+    """Default SensorSuite has no predictor → original fixed-beam behaviour."""
+    config = FSMConfig(idle_pan=0.5, idle_tilt=0.2)
+    fsm, pan, tilt = _build_fsm(config=config)  # attack_predictor defaults to None
+    fsm.step()
+    assert pan.position == pytest.approx(config.idle_pan)
+    assert tilt.position == pytest.approx(config.idle_tilt)
 
 
 # ---------------------------------------------------------------------------
