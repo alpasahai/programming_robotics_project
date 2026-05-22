@@ -21,7 +21,7 @@ ATLAS learns the attacker's launch-direction pattern online during the run:
   empty before accepting the next fresh cue.
 - An online logistic regression (`SGDClassifier`, log-loss, `partial_fit`)
   estimates `P(next sector | context)`; its learning rate provides forgetting so
-  it tracks drift. One meaningful hyperparameter (the adaptation rate).
+  it tracks drift. A small number of interpretable hyperparameters, the primary one being the adaptation rate.
 - The prediction feeds the pure FSM `IDLE` state as a ready-aim bearing
   (Layer-3 strategic suggestion → Layer-2 FSM); the five-state structure
   (ADR-0012) is unchanged.

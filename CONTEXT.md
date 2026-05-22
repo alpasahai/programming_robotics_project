@@ -2,7 +2,7 @@
 
 ## BallisticTrajectoryPredictor
 
-The subsystem responsible for estimating the future position of a tracked projectile using ballistic equations. Operates during the `TRACK_PREDICT` FSM state. Takes the position history from the Track Filter and outputs an Intercept Point. Distinct from the future `AttackPredictor`.
+The subsystem responsible for estimating the future position of a tracked projectile using ballistic equations. Operates during the `TRACK_PREDICT` FSM state. Takes the position history from the Track Filter and outputs an Intercept Point. Distinct from the `AttackPredictor`.
 
 ## AttackPredictor
 
@@ -22,7 +22,7 @@ Online angular clustering subsystem used by `AttackPredictor`. Receives observed
 launch bearings (pan angles in radians, normalised to `[-π, π]`) and discovers
 launch sectors incrementally — no preset count or fixed boundaries. Clustering
 tolerance is derived from radar noise. Cluster count is bounded by a capacity cap.
-Each sector is identified by the mean bearing of its cluster. New observations
+Each sector is identified by the EMA-tracked centre bearing of its cluster. New observations
 either reinforce an existing sector (within tolerance) or create a new one until
 the cap is reached, at which point the closest sector absorbs the observation.
 
