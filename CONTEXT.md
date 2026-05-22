@@ -6,7 +6,35 @@ The subsystem responsible for estimating the future position of a tracked projec
 
 ## AttackPredictor
 
-Planned future subsystem. Analyses patterns across multiple engagements to estimate launch origin and attack frequency. Operates at a higher level than the `BallisticTrajectoryPredictor` — it reasons about threats, not individual projectile trajectories.
+Online learning subsystem on the ATLAS side. Observes each launch radar-only
+(first Search Radar acquisition after a resolution cue, segmented by `LaunchLatch`),
+discovers the launch sectors by online angular clustering (`SectorMap`), and learns
+`P(next launch sector | recent context)` with an online logistic regression
+(`SGDClassifier.partial_fit`). Predicts the **next launch sector** and exposes a
+ready-aim bearing the FSM `IDLE` state uses to pre-slew the turret. Re-adapts when
+the attacker's pattern drifts. Reasons about the *threat stream*, distinct from
+the `BallisticTrajectoryPredictor` (individual projectile trajectories). No
+dataset and no serialized model — it learns live.
+
+## SectorMap
+
+Online angular clustering subsystem used by `AttackPredictor`. Receives observed
+launch bearings (pan angles in radians, normalised to `[-π, π]`) and discovers
+launch sectors incrementally — no preset count or fixed boundaries. Clustering
+tolerance is derived from radar noise. Cluster count is bounded by a capacity cap.
+Each sector is identified by the mean bearing of its cluster. New observations
+either reinforce an existing sector (within tolerance) or create a new one until
+the cap is reached, at which point the closest sector absorbs the observation.
+
+## LaunchLatch
+
+Pure state machine that segments the continuous radar-cue stream into exactly one
+launch observation per engagement. Waits for the previous engagement's cue to be
+cleared (FSM RESET clears the cue; the latch watches for an empty cue) and then
+accepts the first fresh, non-empty cue that arrives afterward as the launch
+observation. This prevents training on a stale in-flight cue from the just-resolved
+projectile — which is still tracked for one step after resolution — and ensures
+each observation corresponds to a genuine new launch near its actual origin.
 
 ## Search Radar
 
