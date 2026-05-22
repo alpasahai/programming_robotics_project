@@ -69,3 +69,14 @@ incoming ball (`Projectile`), which the turret aims *at*. See ADR-0013.
 
 The one-shot event the FSM emits on entering the `ENGAGING` state, carrying the intercept/aim for the shot. The FSM only produces the event; `atlas_controller` consumes it to spawn and launch the Bullet. Keeps node spawning out of the FSM so the FSM stays pure and unit testable.
 
+## LaunchPointEstimator
+
+Online learning subsystem on the ATLAS side. Observes each launch radar-only
+(the Search Radar cue at first acquisition after a resolution cue) and fuses it
+into a recursive per-axis estimate of the attacker's launch origin (exponentially
+-weighted mean — classical noise reduction; variance falls as cues accumulate, and
+the forgetting factor tracks slow drift). Exposes a ready-aim (pan, tilt) the FSM
+IDLE state uses to pre-slew toward the launch origin, cutting acquisition latency.
+Distinct from the BallisticTrajectoryPredictor (per-projectile). No dataset and no
+serialized model — it learns live.
+
