@@ -27,11 +27,18 @@ class SectorMap:
             threshold (set from radar bearing noise), not a learning knob.
         nudge:   EMA factor for moving a centre toward new members (0 = frozen
             centres, 1 = centre snaps to the latest bearing).
+        max_clusters: hard cap on the number of sectors. ``None`` (default) is
+            unbounded. When at capacity, a bearing that matches no existing
+            cluster within ``tol_rad`` folds into the nearest existing cluster
+            instead of opening a new one — so returned ids stay in
+            ``[0, max_clusters)``. Protects fixed-width downstream consumers
+            (one-hot features, ``partial_fit`` classes) from out-of-range ids.
     """
 
-    def __init__(self, tol_rad, nudge=0.2):
+    def __init__(self, tol_rad, nudge=0.2, max_clusters=None):
         self._tol = tol_rad
         self._nudge = nudge
+        self._max_clusters = max_clusters
         self._centers: list[float] = []
 
     def observe(self, bearing) -> int:
@@ -41,8 +48,14 @@ class SectorMap:
             d = abs(_ang_diff(bearing, c))
             if best_dist is None or d < best_dist:
                 best_id, best_dist = i, d
-        if best_id is not None and best_dist <= self._tol:
-            # Nudge the centre toward the new bearing (wrap-safe).
+        at_capacity = (
+            self._max_clusters is not None
+            and len(self._centers) >= self._max_clusters
+        )
+        if best_id is not None and (best_dist <= self._tol or at_capacity):
+            # Join the nearest cluster and nudge its centre (wrap-safe). When at
+            # capacity we fold even out-of-tol bearings here rather than opening
+            # a new (out-of-range) cluster.
             updated = self._centers[best_id] + self._nudge * _ang_diff(
                 bearing, self._centers[best_id]
             )
