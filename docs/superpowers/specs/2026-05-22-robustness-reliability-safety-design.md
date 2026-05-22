@@ -17,12 +17,15 @@ and attributed, then Claude's — with a difficulty-vs-contribution score, and
 
 A few facts from the code that constrain what counts as "robustness" here:
 
-- **The radars are not vision sensors.** Both the Fire-Control Radar
-  (`fire_control_radar.py`) and the external Search Radar (`search_radar.py`)
-  derive target position from Webots `Supervisor.getPosition()` (ground truth)
-  plus **Gaussian noise** and a **FOV-cone + range gate**. There is no `Camera`
-  node and no image pipeline anywhere in the controllers. *Radar is, by physics,
-  insensitive to ambient light.* This directly shapes idea **M3** below.
+- **The radars are not vision sensors — and that is a robustness *feature*.**
+  Both the Fire-Control Radar (`fire_control_radar.py`) and the external Search
+  Radar (`search_radar.py`) derive target position from Webots
+  `Supervisor.getPosition()` (ground truth) plus **Gaussian noise** and a
+  **FOV-cone + range gate**. There is no `Camera` node and no image pipeline
+  anywhere in the controllers. *Radar is, by physics, insensitive to ambient
+  light, glare, shadow, fog, or darkness.* So ATLAS is **already completely
+  robust to visibility/lighting problems by design** — this is a claim we can
+  make and demonstrate, not a gap to fill. This is the basis of idea **M3** below.
 - **The turret fires a real, travelling bullet** (`bullet.py`, ADR-0013) along
   its aim — not an instant-hit laser. So a bad aim genuinely launches a physical
   object in that direction. This is what makes a *friendly-fire interlock* (idea
@@ -135,29 +138,46 @@ it exercises the existing dual-sensor fusion *and* the always-warm Kalman filter
 - **Contribution:** Very High. Hits Robustness *and* Reliability *and* doubles as
   evidence for the "sensor fusion / real-time logic" specialisation marks.
 
-### M3 — Testing under different lighting / visibility conditions
+### M3 — Demonstrate complete robustness to lighting / visibility conditions
 
-**Idea:** the radar should be robust to changing lighting and poor visibility.
+**Idea:** show — and reason — that ATLAS's tracking is **completely robust against
+visibility problems** (changing lighting, glare, darkness, fog/haze).
 
-**Assessment — important caveat:** *as built, the radars don't use light at all*
-(see §0 — they read `getPosition()` + Gaussian noise). Changing the Webots scene
-lighting would have **zero effect** on detection, so a literal "lighting test"
-wouldn't demonstrate anything. Two honest ways to honour the intent:
+**Assessment — this is a robustness *strength* of our design, not a gap.** Because
+ATLAS senses via **radar** (`getPosition()` + Gaussian noise + FOV/range gating)
+rather than a camera (see §0), its detection pipeline has **no dependency on
+ambient light whatsoever**. A camera-based tracker would degrade in glare, low
+light, or fog; ATLAS does not. That is precisely the point worth making, and it
+splits into a *demonstration* and a *justification*:
 
-- **(Recommended) Reframe as environmental-condition robustness for a radar:**
-  build a **robustness test matrix** that varies the things radar actually cares
-  about — elevated sensor noise (σ), cue dropout rate, process noise / wind-drag
-  disturbance, and target speed — and show the Kalman filter + gating + RESET keep
-  ATLAS stable. This *is* "stable operation under different conditions" in the
-  rubric's words, costs almost no new code, and gives the report hard numbers.
-- **(Only if time allows) Add a real `Camera` + simple vision detector** as a
-  *third* perception source, then lighting genuinely matters. This is a large
-  change to the sensing model and is **not advised under the current time
-  crunch**, but it's the only path where "lighting" is literally true.
+- **Demonstration (do this):** add a **lighting/visibility stress demo** to the
+  Webots world — sweep the scene `PointLight`/`DirectionalLight` intensity from
+  bright to near-dark (and optionally add a `Fog` node / background haze) **while a
+  live engagement runs**, and capture the telemetry showing track error, lock
+  state, and hit outcome are **unchanged**. This is a striking, literally-true
+  robustness clip for the video: "we turn the lights off and it keeps tracking."
+  Cost is low — it's a scene/lighting change plus reading the existing telemetry,
+  **no controller code changes**, because nothing in the perception path reads
+  pixels.
+- **Justification (write this up):** in the report, state the design rationale —
+  radar/position sensing is invariant to illumination by construction — so ATLAS
+  is robust to the entire class of visibility faults. This is a stronger, more
+  defensible claim in the viva than any vision tweak: we can explain *why* it
+  holds, not just that it passed one test.
+- **Pair it with the environmental-noise matrix** (the things radar *does* care
+  about): elevated sensor noise σ, cue dropout, process/wind-drag disturbance,
+  target speed. Together, "immune to visibility faults **and** stable under sensor
+  noise" is the complete "stable operation under different conditions" story.
 
-- **Difficulty:** Low (test matrix) / High (real camera).
-- **Contribution:** Medium (test matrix — great for report + video, low novelty) /
-  High-but-risky (camera).
+> Note: this is the recommended path. Adding a real `Camera` + vision detector
+> would make lighting matter *negatively* (introduce a fragility we don't have) —
+> the opposite of the goal — and is a large, risky change. **Do not** add a camera
+> to chase this; our radar design already wins the argument.
+
+- **Difficulty:** Low. Scene lighting/fog change + reading existing telemetry; no
+  perception-code changes.
+- **Contribution:** High for the demo + report — it's a literally-true,
+  visually-obvious robustness claim with a clean engineering justification.
 
 ---
 
@@ -227,8 +247,8 @@ demo/viva strength. ★ = relative.
 |------|:------:|:-----:|:-----------------:|-------|
 | **M1** Friendly-fire keep-out | ★★ | ★★★★ | new safety story | Flagship safety demo |
 | **M2** Sensor-failure graceful degradation | ★★★ | ★★★★★ | reliability + fusion | Flagship robustness demo |
-| **M3a** Robustness test matrix (reframed) | ★ | ★★★ | "different conditions" | Cheap report/video win |
-| **M3b** Real camera + lighting | ★★★★★ | ★★★★ | — | **Too risky now** |
+| **M3** Lighting/visibility robustness demo + noise matrix | ★ | ★★★★ | "different conditions" | Literally-true radar win; no code change |
+| ~~M3-alt~~ Real camera + lighting | ★★★★★ | ★ | — | **Avoid — adds fragility we don't have** |
 | **C1** Motor watchdog → RESET | ★ | ★★★★ | **pitch Safety promise** | Cheapest high-value item |
 | **C2** Cue freshness timeout | ★ | ★★★ | code hook + enables M2 | Do alongside M2 |
 | **C3** Fire-solution validity gate | ★ | ★★ | — | Bundle with M1 |
@@ -255,16 +275,20 @@ clearly, and explicitly *defer* the expensive items.
    for N steps → backup PAN sweep → RESET*. This is the single best Robustness +
    Reliability story and reuses the existing filter/fusion.
 
+4. **M3 — Lighting/visibility robustness demo + noise matrix.** Near-free (a scene
+   lighting/fog sweep + the telemetry we already log, **no controller changes**)
+   and gives a literally-true, video-friendly "lights off, still tracking" clip
+   plus a clean viva justification: radar is illumination-invariant by
+   construction, so ATLAS is robust to the entire class of visibility faults.
+
 **Tier 2 — do if time remains:**
-4. **M3a — Robustness test matrix** (noise σ, dropout, disturbance, speed). Almost
-   free, gives the report hard numbers, and is the honest version of M3.
 5. **C4 — Covariance fire gate.** Best single "we understand our Kalman filter"
    talking point for the individual-understanding marks.
 
 **Defer / avoid under time pressure:**
-- **M3b (real camera + lighting):** changes the whole sensing model — out of scope
-  for the deadline. Document *why radar is light-insensitive* in the report
-  instead; that's a stronger answer than a fake lighting test.
+- **Real camera + vision detector:** would *introduce* the lighting fragility we
+  currently don't have — the opposite of the goal — and changes the whole sensing
+  model. Avoid; argue the radar design's light-invariance in the report instead.
 - **C5 (multi-target prioritisation):** only worth it if the demo world will
   actually contain multiple simultaneous targets. Otherwise it's invisible.
 - **C6:** fold into C3 rather than building separately.
