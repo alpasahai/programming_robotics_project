@@ -282,7 +282,7 @@ while robot.step(timestep) != -1:
                 fire_command[2],
             )
         else:
-            log.info("FIRE ignored — a bullet is still in flight")
+            log.warning("FIRE ignored — a bullet is still in flight")
 
     # 4c. Recycle — park the bullet when the engagement ends: it struck the
     #     ball (bullet-hit cue), the ball landed (ground-hit cue, shot missed),
