@@ -4,42 +4,80 @@
 // For each requirement, briefly describe how your system implements it.
 // This section helps reviewers verify that your system meets the required specifications
 
-This project satisfies all the technical requirements for this assignment through the
-combination of autonomous sensing, decision-making, and robotic control systems. In
-terms of inputs, ATLAS uses the perception of sources provided by the wide-area Search
-Radar and the narrow-beam Fire Control Radar (FCR). These sensors are continuously
-monitoring their surroundings and provide the target measurements for tracking and
-engagement. In terms of outputs, key examples are the bullet system used when the target
-is secured (bullet fires at point of intercept and destroys the projectile) and the pan
-and tilt motors of the turret that respond to the projectiles positioning once the
-radars have provided it with the co-ordinates.
+ATLAS is a complex system with more components and interfaces than are enumerated in
+this section. To keep the report concise, only the principal features that demonstrate
+alignment with each requirement are presented here.
 
+== General Requirements
+=== Inputs
+- World-frame target cue $(x, y, z)$ from the external Search Radar process, delivered
+  over a Webots radio link — the wide-area perception source that drives target
+  acquisition.
+- Turret-relative projectile position from ATLAS's own on-board Fire Control Radar,
+  gated by range and FOV and produced only when locked — the precise perception source
+  that drives tracking and engagement.
 
-FSM architecture was implemented containing the states IDLE, AIM, TRACK_PREDICT,
-ENGAGING, and RESET. The state transitions occur dynamically based on target range,
-tracking stability, prediction validity, and sensor confidence. This allows for
-deterministic and explainable autonomous behavior. Multi-conditional decision logic has
-been incorporated in areas such as the fail-safe mechanism to ensure that ATLAS does not
-cause damage/harm and in the FSM states to ensure all relevant data has been secured
-before moving to the next state e.g. for TRACK_PREDICT to enter ENGAGING, the exit
-conditions must be so that the prediction error is low and the target is still in range
-and stable. Fail-safe systems such as RESET recovery, prediction-confidence gating and
-restructure engagement sectors for the sensors prevent unsafe use and firing.
+Additional inputs include pan and tilt joint-angle sensors that report the turret's true
+boresight, ground-hit and bullet-hit resolution pulses from the Attacker process, and
+the Webots simulation clock that drives the per-tick control loop.
 
+=== Outputs
+- Pan and tilt motor position commands to the turret's azimuth and elevation actuators,
+  slewing the boresight onto the target.
+- Bullet teleport-to-muzzle and velocity write toward the predicted intercept — the
+  physical fire action that engages the threat.
 
-ATLAS incorporates advanced adaptative behaviour components, specifically the
-attack-pattern prediction system also supported by the Kalman filter. The attack-pattern
-prediction system learns the launch patterns overtime using online machine learning and
-then pre-rotates the turret towards the likely future attacks. The Kalman filtering is
-used to adaptively smooth noisy sensor measurements and improve trajectory estimation.
+=== FSM and Behavioural States
+#figure(
+  image("fsm.pdf", width: 50%),
+  caption: [ATLAS finite state machine (FSM) diagram],
+) <FSM>
+@FSM shows ATLAS' FSM contains 5 behavioural states, demonstrating alignment with the
+FSM and minimum behavioural states requirement.
 
+=== Multi-Condition Decision Logic
+The transition labels in @FSM are summaries; the actual guards are multi-condition.
 
-In terms of Embedded Intelligence, sensor fusion is used through the integration of
-external cure data and tracking measurements, taken from the Search Radar and FCR, to
-improve accuracy and robustness. The FCR feeds the TrackFilter every timestep while the
-Search Radar runs a separate process and reaches the FSM only as a world-frame cue.
-Context-aware behaviour is shown through ATLAS’s confident decision making through the
-constant gathering and monitoring of input data resulting in validity of predictions and
-improved accuracy when a target is secured. Real-time logic is shown through the
-immediate response provided by the pan and tilt motors of the current followed by the
-bullet system that intercept the projectile once the co-ordinates are proved valid.
+`TRACK_PREDICT` → `ENGAGING`: prediction error below threshold AND intercept in range
+AND sustained for N consecutive steps.
+
+`IDLE` → `AIM`: cue present for N consecutive steps (debounced; single-frame flickers
+are rejected).
+
+`ENGAGING` → `RESET`: ground-hit cue OR bullet-hit cue OR target out of range.
+
+=== Safety or fail-safe mechanism
+// TODO: update thsi with the anti-friendly fire mechanism
+ATLAS implements two principal fail-safe mechanisms.
+
+Convergence gate before firing: the turret will not fire on a single-frame "good
+prediction". `TRACK_PREDICT` only transitions to `ENGAGING` once the prediction error
+stays below threshold AND the intercept stays within range for `converge_frames`
+consecutive steps, preventing the system from committing a shot on a spurious low-error
+blip.
+
+`RESET` recovery state: every state has a path to `RESET`, which wipes the Kalman
+filter, clears the stale Search Radar cue, and returns the FSM to `IDLE`. A corrupted
+track, a missed projectile, or any unexpected condition cannot persist across
+engagements. This ensures the system always recovers to a clean starting state before
+the next launch.
+
+== Embedded Intelligence Requirements
+=== Sensor Fusion
+A Kalman filter fuses two heterogeneous radar sources: the wide-area Search Radar (high
+noise, `R_SEARCH = 0.1`) and the narrow-beam FCR (low noise, `R_FCR = 0.001`). The
+filter weights precise FCR measurements far more heavily than coarse Search Radar cues.
+The predict step runs every tick regardless of measurement availability, so a sensor
+dropout does not collapse the estimate.
+
+=== Context-aware Behaviour
+The turret adapts to engagement context instead of following hard-coded triggers. In
+`IDLE`, the `AttackPredictor` (online logistic regression over discovered launch
+sectors) supplies a predicted next-sector bearing and the turret pre-slews toward it.
+The convergence gate also waits longer when the track is volatile and fires sooner when
+it is stable, rather than firing on a fixed timer.
+
+=== Real-time Logic
+ATLAS runs a synchronous Sense → Predict → Fuse → Decide loop on the Webots simulation
+clock (32 ms per tick). Sensor sampling, Kalman prediction, and FSM evaluation run every
+tick unconditionally, so the world model is always fresh when a decision is made.

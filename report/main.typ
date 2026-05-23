@@ -15,14 +15,11 @@
 )
 #set heading(numbering: "1.")
 #pagebreak()
-#include "fsm.typ"
 
 // TODO: move this into an appropriate place later
-#figure(
-  image("fsm.pdf", width: 80%),
-  caption: [FSM diagram],
-)
+#include "fsm.typ"
 
+#pagebreak()
 // Project Sections.
 #include "1-project-overview.typ"
 #include "2-technical-requirements-compliance.typ"
