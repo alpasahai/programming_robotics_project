@@ -10,28 +10,25 @@
 // ● Sensors used
 // ● Actuators used
 // ● Intelligent behaviour implemented
+Autonomous Tracking and Laser Aiming System (ATLAS) is a complete fire-control system
+capable of fully autonomous target identification, trajectory prediction and engagement.
+ATLAS consists of two units: the fire-control radar (FCR) and the search radar. These
+units operate as collaborative subsystems that communicate cueing information over
+emitters and receivers. The system was designed to operate in a simulated outdoor
+environment within Webots.
 
-This report discusses the Autonomous Tracking and Laser Aiming System (ATLAS) project,
-which is a robotic defense simulation developed and tested in Webots. The main purpose
-of the system is to detect, track, predict, and intercept incoming projectile objects
-within a bounded engagement sector using a stationary pan-tilt turret. ATLAS operates on
-a cue-driven fire-control subsystem where a Search Radar first preforms a wide-area scan
-before directing the target information to a precise Fire Control Radar (FCR) which is
-located on the turret.
+The role of the Search Radar is to continuously scan a wide search area and provide 3D
+radar cues to the FCR. The FCR consists of a turret-mounted narrow-beam radar and a
+projectile launch system used to engage incoming threats. Rotational motor actuators are
+used to control both the Search Radar sweep motion and the pan/tilt movement of the FCR
+turret, enabling the system to autonomously scan, track, and engage airborne targets.
+When a target is identified by the Search Radar, the FCR attempts to lock onto the
+target. Once the target has been locked, sensor data from both radar systems is fused
+using a Kalman filter to reduce measurement noise and estimate the projectile’s future
+location. Once the error between the estimation and true location has been minimised,
+the projectile launch system attempts to neutralise the threat.
 
-
-ATLAS solves the problem of autonomous projectile interception by utilising perception,
-prediction, and real-time decision making. By using two radar-based perception sources,
-the system can get a coarse target acquisition using the Search Radar and narrow-beam
-precision tracking using the FCR. These sensors use the Kalman filter to help reduce
-noise and help improve the target estimation accuracy. The system also predicts future
-projectile trajectories and autonomously aims and fires towards the estimated point of
-interception.
-
-
-The system operates within a simulated Webots environment and contains realistic
-projectile physics, turret motion, radar scanning, and autonomous target engagement. The
-key actuators are the pan motor, tilt motor, and the projectile firing mechanism. This
-project has also implemented intelligent behavior such as using a Finite State Machine
-(FSM) control, adaptive attack-pattern prediction, Kalman-filter-based sensor fusion,
-and engagement logic based on data confidence.
+ATLAS uses online supervised learning---an SGDClassifier updated one launch at a time
+via `partial_fit`---to learn the attacker's launch-direction pattern live and pre-slew
+the turret toward the predicted next sector while idle, re-adapting continuously as the
+pattern drifts.

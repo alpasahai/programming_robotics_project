@@ -1,5 +1,7 @@
 #set page(
   margin: 2.5cm,
+  numbering: "1",
+  number-align: bottom + center,
 )
 
 #align(center)[
