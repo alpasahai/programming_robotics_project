@@ -1,5 +1,11 @@
 // TODO: alpa go into header.typ and fill it out with your s number.
 // also we have to figure out their emails and stuff to add them to the git repo
+#set page(
+  margin: 2.5cm,
+  numbering: "1",
+  number-align: bottom + center,
+)
+#set text(size: 10pt)
 #include "0-header.typ"
 #pagebreak()
 
@@ -10,16 +16,7 @@
 )
 #set heading(numbering: "1.")
 
-
 #pagebreak()
-#include "fsm.typ"
-
-// TODO: move this into an appropriate place later
-#figure(
-  image("fsm.pdf", width: 80%),
-  caption: [FSM diagram],
-)
-
 // Project Sections.
 #include "1-project-overview.typ"
 #include "2-technical-requirements-compliance.typ"
