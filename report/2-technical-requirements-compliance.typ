@@ -38,10 +38,7 @@ FSM and minimum behavioural states requirement.
 The transition labels in @FSM are summaries; the actual guards are multi-condition.
 
 `TRACK_PREDICT` → `ENGAGING`: prediction error below threshold AND intercept in range
-AND sustained for N consecutive steps.
-
-`IDLE` → `AIM`: cue present for N consecutive steps (debounced; single-frame flickers
-are rejected).
+AND sustained for N consecutive steps AND turret not aiming at Search Radar.
 
 `ENGAGING` → `RESET`: ground-hit cue OR bullet-hit cue OR target out of range.
 
