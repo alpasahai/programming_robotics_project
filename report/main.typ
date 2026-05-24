@@ -5,6 +5,7 @@
   numbering: "1",
   number-align: bottom + center,
 )
+#set text(size: 10pt)
 #include "0-header.typ"
 #pagebreak()
 

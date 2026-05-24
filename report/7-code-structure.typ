@@ -4,6 +4,32 @@
 // ● Control loop
 // ● Key libraries used
 
+`atlas_controller.py` is the hub from which all of ATLAS's system logic is delegated. It
+is the only module inside the turret package that talks to Webots directly — every other
+module operates on plain Python objects passed in by the controller. At startup it
+instantiates every module, wires their dependencies, and then loops on
+`robot.step(timestep)` until the simulation ends. The loop body is deliberately thin —
+no control logic lives in the controller itself; it only delegates, in a fixed order, to
+the modules below and applies whatever commands they emit. The other Webots process,
+`search_radar_controller/`, is comparatively simple: it sweeps a beam and emits a noisy
+world-frame cue over radio, which ATLAS consumes as one of its inputs.
+
+ATLAS's modules each carry a single responsibility. `FireControlRadar` is the on-board
+radar; `SearchRadarLink`, `AttackerGroundHitLink`, and `BulletHitLink` are the radio
+receivers for the Search Radar cue and the attacker's resolution pulses. `TrackFilter`
+is the Kalman estimator (built on `filterpy`), `BallisticTrajectoryPredictor` computes
+the intercept, and `AttackPredictor` (with its supporting `SectorMap` and `LaunchLatch`)
+is the online learner. `AtlasFSM` is the state machine. `Bullet` owns the
+recycled-projectile lifecycle. `telemetry.py` and `scoreboard.py` are observers and have
+no effect on control.
+
+Third-party libraries: `numpy` (linear algebra), `filterpy` (Kalman), `scikit-learn`
+(`SGDClassifier` for online learning), and the Webots `controller` API. The modules are
+written against stub interfaces, so the 26 `pytest` files under each controller's
+`tests/` directory run without Webots.
+
+// === REFERENCE: original prose version (kept for comparison; not included in build) ===
+/*
 The ATLAS software system is designed using modular architecture to separate all the
 independent components. The central layer that dictates the main process is implemented
 in atlas_controller.py. This is primarily responsible for constructing the system
@@ -42,3 +68,4 @@ tracking. scikit-learn is used within the adaptive attack-pattern learner for
 lightweight machine-learning classification, and standard Python libraries such as math
 and os are used for geometry and configuration handling. The repository also includes
 pytest for automated unit testing and validation.
+*/

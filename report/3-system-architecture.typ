@@ -3,7 +3,7 @@
 // Explain briefly how information flows through the system
 
 #figure(
-  image("system-architecture.pdf", width: 60%),
+  image("system-architecture.pdf", width: 40%),
   caption: [ATLAS system architecture diagram],
 ) <ARCH>
 Every 32 ms tick the ATLAS controller runs the three-stage Sense $->$ Think $->$ Act
