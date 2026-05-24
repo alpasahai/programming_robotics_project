@@ -27,7 +27,7 @@ class SensorSuite:
     ballistic_predictor: object  # BallisticTrajectoryPredictor
     ground_hit_link: object  # AttackerGroundHitLink — attacker ground-hit pulse
     bullet_hit_link: object  # BulletHitLink — attacker bullet-hit (projectile-destroyed) pulse
-    # Optional Think-layer predictor providing a pre-aim suggestion for IDLE.
+    
     # get_ready_aim() -> (pan, tilt) | None. Default None keeps the original
     # fixed-beam IDLE behaviour (and existing tests) working.
     attack_predictor: object = None
@@ -39,7 +39,6 @@ class TurretHardware:
 
     Injected into AtlasFSM at construction.
     """
-
     pan_motor: object  # Webots RotationalMotor
     tilt_motor: object  # Webots RotationalMotor
     turret_position: list[float]  # World-frame [x, y, z] of turret origin

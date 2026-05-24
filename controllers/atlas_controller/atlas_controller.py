@@ -170,6 +170,7 @@ fcr = FireControlRadar(
     max_range=FCR_MAX_RANGE_M,
     noise_std=FCR_NOISE_STD_M,
 )
+
 cue_link = SearchRadarLink(receiver)
 ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
 bullet_hit_link = BulletHitLink(bullet_hit_receiver)
@@ -298,6 +299,7 @@ while robot.step(timestep) != -1:
     cue_link.update()
     ground_hit_link.update()
     bullet_hit_link.update()
+    
     if ground_hit_link.hit_this_step():
         log.info(
             "[ATLAS] ground-hit cue received: hit #%d at t=%.2fs",
@@ -316,8 +318,10 @@ while robot.step(timestep) != -1:
         scoreboard.record_ground_hit()
     if bullet_hit_link.hit_this_step() or ground_hit_link.hit_this_step():
         score_log.info("t=%.1fs %s", robot.getTime(), scoreboard.summary())
+    
     pan_actual = pan_sensor.getValue()
     tilt_actual = tilt_sensor.getValue()
+    
     if math.isnan(pan_actual):
         pan_actual = 0.0
     if math.isnan(tilt_actual):
