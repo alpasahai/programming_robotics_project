@@ -1,0 +1,116 @@
+---
+---
+title: ATLAS System Architecture
+---
+flowchart TB
+
+    %% ══════════════════════════════════════════
+    %% SEARCH RADAR CONTROLLER
+    %% ══════════════════════════════════════════
+    subgraph SR["SEARCH RADAR CONTROLLER"]
+        direction TB
+        SR1(["SearchRadar\nFOV gate + track buffer"])
+        SR2(["BeamAlignment\nVisual FOV → bearing"])
+        SR3(["CueEmitter\nWorld-frame cue → ch1"])
+        SR4(["CueTelemetry\nPer-step logging"])
+        SR5(["geometry.py\naz / el / range helpers"])
+        SR1 --> SR2 --> SR3
+        SR3 --> SR4
+        SR5 -->SR1
+    end
+
+    %% ══════════════════════════════════════════
+    %% ATLAS CONTROLLER (SUPERVISOR)
+    %% ══════════════════════════════════════════
+    subgraph ATLAS["ATLAS CONTROLLER — Supervisor"]
+        direction TB
+
+        FSM(["AtlasFSM\nIDLE · AIM · TRACK_PREDICT · ENGAGING · RESET"])
+
+        %% ── SENSE ──────────────────────────────
+        subgraph SENSE["SENSE  — perceive the environment"]
+            direction LR
+            A1(["FireControlRadar\nFOV cone · real turret aim"])
+            A2(["SearchRadarLink\nReceives cue — ch1"])
+            A3(["AttackerGroundHitLink\nGround-hit pulse — ch2"])
+            A4(["BulletHitLink\nBullet-hit pulse — ch3"])
+        end
+
+        %% ── THINK ──────────────────────────────
+        subgraph THINK["THINK  — estimate, predict, decide"]
+            direction LR
+            T1(["TrackFilter\nKalman 6-state  [x y z vx vy vz]"])
+            T2(["BallisticPredictor\nClosed-form intercept"])
+            T3(["AttackPredictor\nSectorMap + SGDClassifier"])
+        end
+
+        %% ── ACT ────────────────────────────────
+        subgraph ACT["ACT  — command hardware"]
+            direction LR
+            C1(["Bullet\nRecycle lifecycle"])
+            C2(["Pan + Tilt Motors\nRotationalMotor × 2"])
+        end
+
+        TEL(["TrackTelemetry\nPer-step debug logging"])
+        LIB(["lib/ shared\ngeometry.py · scene.py"])
+
+        FSM --> SENSE
+        SENSE -->|"raw observations"| THINK
+        THINK -->|"fire commands"| ACT
+        THINK --> TEL
+        LIB --> SENSE
+        LIB --> THINK
+    end
+
+    %% ══════════════════════════════════════════
+    %% ATTACKER CONTROLLER
+    %% ══════════════════════════════════════════
+    subgraph ATK["ATTACKER CONTROLLER"]
+        direction TB
+        K2(["AttackPattern\nStructured noisy drift"])
+        K3(["Sectors\nLaunch geometry"])
+        K1(["Projectile\nSpawn / despawn lifecycle"])
+        K4(["on_ground_hit\nEmits ch2 pulse"])
+        K5(["on_bullet_hit\nEmits ch3 pulse"])
+        K2 --> K3 --> K1
+        K1 --> K4
+        K1 --> K5
+    end
+
+    %% ══════════════════════════════════════════
+    %% WEBOTS PHYSICS
+    %% ══════════════════════════════════════════
+    WB(["WEBOTS PHYSICS\nODE · gravity · contacts"])
+
+    %% ══════════════════════════════════════════
+    %% RADIO LINKS  (inter-controller)
+    %% ══════════════════════════════════════════
+    SR3 -- "ch1 cue  SR → ATLAS" --> A2
+    K4  -- "ch2 ground-hit  Attacker → ATLAS" --> A3
+    K5  -- "ch3 bullet-hit  Attacker → ATLAS" --> A4
+
+    WB -. physics .-> ATK
+    WB -. physics .-> ATLAS
+
+    %% ══════════════════════════════════════════
+    %% STYLES
+    %% ══════════════════════════════════════════
+    classDef srStyle    fill:#1a4a6b,stroke:#5bafd6,color:#cce8f5,rx:8
+    classDef atlasStyle fill:#2d3a6b,stroke:#7b8fe0,color:#d0d8f8
+    classDef senseStyle fill:#1b3d5c,stroke:#4fa3cc,color:#b8ddf0
+    classDef thinkStyle fill:#163356,stroke:#4a90d9,color:#a8d0f0
+    classDef actStyle   fill:#1a2e50,stroke:#6a9fd8,color:#bdd6f0
+    classDef atkStyle   fill:#5a1a0d,stroke:#e07050,color:#f5c4b3
+    classDef wbStyle    fill:#1a1a2e,stroke:#8080c0,color:#c0c0e8
+    classDef fsmStyle   fill:#3a2d6b,stroke:#a090e0,color:#e0d8fc
+    classDef libStyle   fill:#1f3350,stroke:#608ab0,color:#b0cce0
+
+    class SR,SR1,SR2,SR3,SR4,SR5 srStyle
+    class ATLAS,SENSE,THINK,ACT atlasStyle
+    class A1,A2,A3,A4 senseStyle
+    class T1,T2,T3 thinkStyle
+    class C1,C2 actStyle
+    class ATK,K1,K2,K3,K4,K5 atkStyle
+    class WB wbStyle
+    class FSM fsmStyle
+    class TEL,LIB libStyle

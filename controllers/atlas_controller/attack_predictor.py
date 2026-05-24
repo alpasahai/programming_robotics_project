@@ -14,7 +14,6 @@ classes to be useful), it reports no prediction and the FSM falls back to its
 fixed idle aim. See the attack-plan spec.
 """
 import numpy as np
-
 from attack_features import extract_features
 
 
@@ -22,7 +21,7 @@ class AttackPredictor:
     """Online next-sector predictor feeding a ready-aim bearing to the FSM.
 
     Args:
-        model:        an online classifier exposing ``partial_fit(X, y, classes=)``
+        model: an online classifier exposing ``partial_fit(X, y, classes=)``
             and ``predict(X)`` (e.g. sklearn ``SGDClassifier(loss="log_loss")``).
             Injected for testability.
         sector_map:   a ``SectorMap`` for online sector discovery.

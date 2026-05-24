@@ -170,6 +170,7 @@ fcr = FireControlRadar(
     max_range=FCR_MAX_RANGE_M,
     noise_std=FCR_NOISE_STD_M,
 )
+
 cue_link = SearchRadarLink(receiver)
 ground_hit_link = AttackerGroundHitLink(ground_hit_receiver)
 bullet_hit_link = BulletHitLink(bullet_hit_receiver)
@@ -298,6 +299,7 @@ while robot.step(timestep) != -1:
     cue_link.update()
     ground_hit_link.update()
     bullet_hit_link.update()
+    
     if ground_hit_link.hit_this_step():
         log.info(
             "[ATLAS] ground-hit cue received: hit #%d at t=%.2fs",
@@ -316,8 +318,10 @@ while robot.step(timestep) != -1:
         scoreboard.record_ground_hit()
     if bullet_hit_link.hit_this_step() or ground_hit_link.hit_this_step():
         score_log.info("t=%.1fs %s", robot.getTime(), scoreboard.summary())
+    
     pan_actual = pan_sensor.getValue()
     tilt_actual = tilt_sensor.getValue()
+    
     if math.isnan(pan_actual):
         pan_actual = 0.0
     if math.isnan(tilt_actual):
@@ -399,18 +403,39 @@ while robot.step(timestep) != -1:
 
     # 4b. Fire — arm the recycled bullet when the FSM commits to a shot. One
     #     bullet at a time: a fire command while armed/in flight is ignored.
+    #SAFETY FEATURE: only fire if turret is not pointing towards the Search Radar
     fire_command = fsm.consume_fire_command()
     if fire_command is not None:
         if bullet.is_parked:
-            bullet.fire(fire_command)
-            log.info(
-                "FIRE — bullet armed toward intercept [%.3f, %.3f, %.3f]",
-                fire_command[0],
-                fire_command[1],
-                fire_command[2],
-            )
+        
+        #Safety exclusion zone around the Search Radar:
+            SEARCH_RADAR_BEARING_RAD = 0.0
+            SAFETY_EXCLUSION_RAD = 0.4 #this is 23 degrees
+            
+            #Ensuring that it's [-pi, pi]
+            pan_now = pan_sensor.getValue()
+            pan_wrapped = math.remainder(pan_now, math.tau)
+            
+            #Smalled anglualr difference to the radar bearing
+            angle_to_radar = abs(math.remainder(pan_wrapped - SEARCH_RADAR_BEARING_RAD, math.tau))
+            
+            fire_allowed = angle_to_radar > SAFETY_EXCLUSION_RAD
+            
+            if fire_allowed: 
+                bullet.fire(fire_command)
+                log.info(
+                    "FIRE — bullet armed toward intercept [%.3f, %.3f, %.3f]",
+                    fire_command[0],
+                    fire_command[1],
+                    fire_command[2],
+                )
+            else: 
+                log.warning(
+                    "FIRE SUPPRESSED - Search Radar exclusion zone"
+                    "(pan=%.3f rad)", pan_wrapped,
+                )
         else:
-            log.warning("FIRE ignored — a bullet is still in flight")
+             log.warning("FIRE ignored — a bullet is still in flight")
 
     # 4c. Recycle — park the bullet when the engagement ends: it struck the
     #     ball (bullet-hit cue), the ball landed (ground-hit cue, shot missed),

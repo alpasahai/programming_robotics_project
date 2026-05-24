@@ -1,5 +1,4 @@
 """Search Radar — wide-beam external acquisition sensor (simulated).
-
 See ADR-0006 for the sensor-membrane and track-id identity contract.
 """
 import math
@@ -31,7 +30,6 @@ class Detection(NamedTuple):
 @dataclass(frozen=True)
 class RadarBeamVisualSpec:
     """Renderable cone matching the SearchRadar detection beam.
-
     The software gate and visualisation both use this same cone volume.
     """
 
