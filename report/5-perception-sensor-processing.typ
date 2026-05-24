@@ -9,35 +9,30 @@
 // ● What data is read
 // ● How it affects decisions
 
-Perception is built entirely from radar, inter-process radio, and the turret's own
-joint-angle sensors. Each tick the controller drains five streams: a coarse world-frame
-cue from the off-board Search Radar (noise std $approx 0.2$ m), a precise
-turret-relative position from the on-board Fire-Control Radar (FCR) when it has a lock
-(noise std $approx 0.02$ m), one-shot ground-hit and bullet-hit pulses from the
-attacker, and the pan/tilt joint angles reporting the turret's measured boresight.
+Perception is built from radar, inter-process radio, and joint-angle sensors. Each tick
+the controller drains five streams: a coarse world-frame cue from the Search Radar
+(noise std $approx 0.2$ m), a turret-relative position from the on-board Fire-Control
+Radar (FCR) when locked (noise std $approx 0.02$ m), one-shot ground-hit and bullet-hit
+pulses, and the pan/tilt joint angles giving the measured boresight.
 
 At the core of the pipeline is a Kalman filter — a running estimate of the projectile's
-position $(x, y, z)$ and velocity $(v_x, v_y, v_z)$. Each tick a *predict* step advances
-the estimate using projectile physics (position propagated by velocity, with gravity
-acting on velocity), so a transient radar dropout cannot collapse the track. An *update*
-step then blends incoming measurements with the prediction; the radars report position
-only, with velocity inferred from its evolution over time. The weight of each
-measurement is governed by its noise variance $R$, and ATLAS separates the two radars by
-two orders of magnitude: $R_"FCR" = 0.001$ vs $R_"SEARCH" = 0.1$. The FCR is fused on
-every locked tick; the Search Radar is fused only during `TRACK_PREDICT`, contributing a
-weak long-range correction without polluting the precise track. The resulting
-position–velocity estimate feeds the `BallisticTrajectoryPredictor`, which extrapolates
-forward to a closed-form intercept point.
+position $(x, y, z)$ and velocity $(v_x, v_y, v_z)$. The *predict* step advances the
+estimate each tick using projectile physics (position by velocity, gravity on velocity),
+so a transient dropout cannot collapse the track. The *update* step blends incoming
+measurements with the prediction; radars report position only, so velocity is inferred
+from its evolution over time. Measurement weight is governed by the noise variance $R$,
+and the two radars are separated by two orders of magnitude — $R_"FCR" = 0.001$ vs
+$R_"SEARCH" = 0.1$ — so the FCR dominates corrections. The FCR is fused on every locked
+tick; the Search Radar is fused only during `TRACK_PREDICT`, adding a weak long-range
+correction without polluting the precise track. The resulting estimate feeds the
+`BallisticTrajectoryPredictor`, which extrapolates to a closed-form intercept.
 
-These products drive the FSM through guards that combine several perception signals at
-once. The FCR lock flag promotes `AIM` to `TRACK_PREDICT`. The fire decision is
-stricter: the rolling predicted-vs-observed error must stay below threshold and the
-predicted intercept must stay in range, both for several consecutive frames, before
-`TRACK_PREDICT` hands off to `ENGAGING`. A final gate compares the measured pan angle
-against the Search Radar's bearing and suppresses the shot if the boresight lies inside
-an exclusion cone around the friendly radar. The pipeline only commits the turret to a
-shot once it has demonstrated sustained agreement with reality and the barrel is not
-pointed at a friendly asset.
+These products drive the FSM through compound guards. The FCR lock flag promotes `AIM`
+$arrow$ `TRACK_PREDICT`; the fire decision is stricter, requiring the
+predicted-vs-observed error to stay below threshold AND the intercept to stay in range,
+both for several consecutive frames, before `TRACK_PREDICT` $arrow$ `ENGAGING`. A final
+gate suppresses the shot if the measured pan angle lies inside the friendly-radar
+exclusion cone.
 
 // === REFERENCE: original prose version (kept for comparison; not included in build) ===
 /*

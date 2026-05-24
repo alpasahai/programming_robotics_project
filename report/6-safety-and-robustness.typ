@@ -7,6 +7,26 @@
 // ● Timeout protection
 // Explain what happens if sensors fail or unexpected situations occur.
 
+ATLAS layers several safety mechanisms over the FSM and perception pipeline. The two
+principal ones are:
+
+*Convergence gate (fail-safe before firing).* `TRACK_PREDICT` $arrow$ `ENGAGING` only
+trips once the predicted-vs-observed error stays below threshold AND the intercept stays
+in range for several consecutive ticks, so a single-frame "good prediction" cannot
+commit the turret to a shot.
+
+*Anti-friendly-fire exclusion zone.* Every fire command is gated against the measured
+pan angle; if the boresight lies within $plus.minus 0.4$ rad ($approx 23 degree$) of the
+Search Radar's bearing, the shot is suppressed. The turret may still track through the
+cone — only firing is blocked.
+
+Supporting measures: universal `RESET` recovery (every state can exit to `RESET`, which
+wipes filter state before returning to `IDLE`), sensor-dropout tolerance (the Kalman
+predict step runs every tick regardless of measurement availability), and a debounced
+`IDLE` $arrow$ `AIM` transition that rejects single-frame cue flickers.
+
+// === REFERENCE: original prose version (kept for comparison; not included in build) ===
+/*
 ATLAS implements multiple safety and robustness mechanisms to ensure stable operation
 during uncertain conditions. The system uses confidence-gated engagement logic to
 prevent firing at the target when there is insufficient tracking or prediction
@@ -33,3 +53,4 @@ Additional mechanisms including the bullet-lifetime timeout, single-bullet inter
 stable-cue clearing and target timeout handling further improve the safety of the
 system. These mechanisms unstable firing and overlapping engagements during unexpected
 simulation conditions.
+*/
