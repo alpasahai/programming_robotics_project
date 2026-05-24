@@ -1,28 +1,29 @@
 = System Architecture
-// TODO: Explain the system structure using the Sense → Process → Decide → Act model.
+// TODO: Explain the system structure using the Sense → Think → Act model.
 // Explain briefly how information flows through the system
 
-ATLAs follows the Sense -> Process -> Decide -> Act architecture. As the information
-flows through the multiple modular subsystems that are responsible for perception,
-prediction, decision-making and physical actuation, the system acts accordingly. The
-architecture separates the behavioral logic, sensing logic, hardware control, and
-prediction into independent modules to improve robustness, system reliability, and
-maintainability.
+#figure(
+  image("system-architecture.pdf", width: 60%),
+  caption: [ATLAS system architecture diagram],
+) <ARCH>
+@ARCH illustrates how ATLAS conforms to the Sense $->$ Think $->$ Act embedded control
+loop.
 
+*Sense* drains four inputs each tick: the world-frame Search Radar cue on ch1
+(`SearchRadarLink`), the turret-relative position from the on-board Fire Control Radar
+when locked (`FireControlRadar`), and ground-hit / bullet-hit resolution pulses on ch2
+and ch3.
 
-The Sense layer focuses on the Search Radar and Fire Control Radar (FCR) subsystems. The
-Search Radar preforms wide-area scanning and broadcasts the coarse target cues to the
-FCR which performs the narrow-beam precision tracking once the projectile enters the
-turret’s engagement region. The Process layer consists of the Kalman Filter and the
-Ballistic Trajectory Predictor. These help to estimate the projectile’s position,
-velocity, and future interception points while reducing the sensor noise and improving
-stability.
+*Think* turns those inputs into a chosen action. A 6-state Kalman filter
+($[x, y, z, v_x, v_y, v_z]$) fuses the radar streams, weighting precise FCR
+measurements far above the noisy Search cues; the `BallisticPredictor` propagates that
+estimate to a closed-form intercept, and the `AttackPredictor` learns launch-sector
+patterns online to pre-aim for the next engagement. The `AtlasFSM` reads this
+always-fresh world model and arbitrates the next action, advancing through `IDLE` $->$
+`AIM` $->$ `TRACK_PREDICT` $->$ `ENGAGING` $->$ `RESET` based on lock state,
+convergence, and resolution cues.
 
-
-The Decide layer is mainly the FSM logic. This is where the evaluation of the projectile
-trajectory confidence occurs along with the validity of prediction, engagement
-constraints, and the system’s safety and exit conditions before determining the next
-behavioral state. Finally, the Act layer controls the physical behaviour of the turret
-(pan and tilt motor) and the bullet firing system. Once the engagement conditions have
-been met, the turret autonomously rotates and aligns with the predicted interception
-point and launches the bullet toward the target.
+*Act* turns FSM decisions into physical commands: pan/tilt `RotationalMotor` writes slew
+the boresight, and the recycled `Bullet` is teleported to the muzzle and launched when
+the FSM commits to a shot — subject to the anti-friendly-fire pan-angle gate before
+arming.

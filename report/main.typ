@@ -14,10 +14,6 @@
   target: figure,
 )
 #set heading(numbering: "1.")
-#pagebreak()
-
-// TODO: move this into an appropriate place later
-#include "fsm.typ"
 
 #pagebreak()
 // Project Sections.

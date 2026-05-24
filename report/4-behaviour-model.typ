@@ -5,6 +5,49 @@
 // ● Conditions that trigger state transitions
 // Explain why this behaviour model was chosen
 
+ATLAS uses an FSM for autonomous target detection, tracking, prediction, and engagement.
+FSM control gives deterministic behaviour, modular state transitions, and a guaranteed
+fail-safe recovery path under noisy sensing. The five behavioural states are summarised
+below; @FSM gives the full transition diagram.
+
+*`IDLE`.* The turret holds its search beam, or pre-aims at the `AttackPredictor`'s next
+predicted sector, while waiting for a Search Radar cue. On the very first cue of a new
+launch, the `AttackPredictor` ingests the observed launch sector — in a single atomic
+call it performs one online learning step on the just-observed launch and then uses the
+freshly updated model to predict the sector after that, which `IDLE` immediately
+consumes for pre-aim. The FSM moves to `AIM` once a cue has been present for several
+consecutive frames, or falls through to `RESET` if a ground-hit cue arrives.
+
+*`AIM`.* The turret slews toward the raw Search Radar cue; the Kalman estimate is not
+yet trustworthy at this stage, so no fusion runs. As soon as the FCR locks on (the
+target is inside the narrow FOV cone and within range) the FSM moves to `TRACK_PREDICT`.
+A ground-hit cue again sends the FSM to `RESET`.
+
+*`TRACK_PREDICT`.* Each tick the turret slews to the latest filtered position, which
+keeps the projectile inside the FCR's narrow FOV so the FCR keeps returning fresh
+turret-relative measurements — closing a tight track-and-aim loop. The `TrackFilter`
+(Kalman) fuses those FCR measurements with the Search Radar cue into a smoothed
+estimate, and the `BallisticPredictor` propagates it forward to a closed-form intercept.
+A convergence gate compares each predicted intercept against the later observed
+position; once the prediction error stays below threshold and the intercept stays in
+range for several consecutive frames, the FSM moves to `ENGAGING`. A hit cue sends the
+FSM to `RESET`.
+
+*`ENGAGING`.* The turret holds aim at the now-frozen intercept and fires a bullet toward
+it, subject to the anti-friendly-fire pan-angle gate. No further prediction runs in this
+state. The FSM moves to `RESET` on a bullet-hit cue, a ground-hit cue, or if the target
+leaves the engagement range.
+
+*`RESET`.* Wipes the Kalman state, clears the stale Search Radar cue, and resets the
+prediction history and intercept target so no stale data leaks into the next engagement.
+Once reset is complete the FSM returns to `IDLE`.
+
+The FSM cleanly separates detection, aiming, tracking + prediction, engagement, and
+recovery into independent stages, improving readability, maintainability, and robustness
+under real-time constraints.
+
+// === REFERENCE: original prose version (kept for comparison; not included in build) ===
+/*
 As mentioned, ATLAS uses a finite state machine (FSM) to manage autonomous target
 detection, tracking, prediction, and engagement. FSM control was selected because it
 provides deterministic behaviour, modular state transitions, and a reliable fail-safe
@@ -57,3 +100,4 @@ The FSM architecture is essential in cleanly separating detection, aiming, track
 prediction, engagement and recovery into independent behavioral stages. This approach
 improves the system’s readability, maintainability, and robustness while ensuring
 reliable autonomous operation within a real-time robotics environment.
+*/
