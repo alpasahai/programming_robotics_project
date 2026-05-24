@@ -53,7 +53,8 @@ from cue_telemetry import CueTelemetry
 # single source for both the SearchRadar model and the visible debug beam.
 SEARCH_RADAR_MAX_RANGE_M = 20.0
 SEARCH_RADAR_VERTICAL_FOV_RAD = math.pi / 2
-SEARCH_RADAR_BEAM_WIDTH_RAD = 0.35
+#improving accuracy
+SEARCH_RADAR_BEAM_WIDTH_RAD = 0.45
 SEARCH_RADAR_SCAN_RATE_RAD_PER_STEP = 0.15
 SEARCH_RADAR_TRACK_TIMEOUT_STEPS = 20  # TODO: figure out what this does
 

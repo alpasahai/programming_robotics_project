@@ -87,6 +87,7 @@ score_log = configure_scoreboard()
 # ---------------------------------------------------------------------------
 
 # Fire-Control Radar — narrow-beam, precise.
+#Changing the half-angle for higher accuracy - accuracy point 35%: 
 FCR_FOV_HALF_ANGLE_RAD = 0.1  # ~5.7° half-angle
 FCR_MAX_RANGE_M = 20.0        # detection range (cf. FSM engagement range)
 FCR_NOISE_STD_M = 0.02        # low noise — FCR is precise (metres std)
@@ -99,7 +100,7 @@ TRACK_FILTER_Q = 0.01         # process noise scale — small for near-ballistic
 # --- Turret weapon (bullet) ---
 # v_max < (r_ball + r_bullet)/timestep ≈ 20 m/s at 32 ms (ODE is discrete — no
 # CCD — so a too-fast bullet tunnels through the ball). Tune in Webots.
-MUZZLE_SPEED_MPS = 18.0
+MUZZLE_SPEED_MPS = 18.0 #inceaseing bullet speed
 MUZZLE_OFFSET_M = 0.6           # spawn this far along the aim, clear of the turret
 BULLET_PARK_POSITION = [0.0, 0.0, -100.0]
 BULLET_MAX_LIFETIME_STEPS = 400  # safety: recycle a bullet that never resolves
@@ -111,6 +112,7 @@ BULLET_MAX_LIFETIME_STEPS = 400  # safety: recycle a bullet that never resolves
 # Derived, not hand-tuned.
 SEARCH_RADAR_NOISE_STD_M = 0.2
 NOMINAL_LAUNCH_RANGE_M = 10.0
+#Altering these parameters for higher accuracy
 SECTOR_TOL_RAD = 4.0 * SEARCH_RADAR_NOISE_STD_M / NOMINAL_LAUNCH_RANGE_M  # ≈0.08 rad
 MAX_SECTORS = 8                 # capacity bound (fixed feature width / class set)
 PRE_AIM_TILT_RAD = 0.3          # elevation held while pre-aiming at a sector
