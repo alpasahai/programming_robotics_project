@@ -1,4 +1,4 @@
-= System Architecture
+= System Architecture <sec:architecture>
 // TODO: Explain the system structure using the Sense → Think → Act model.
 // Explain briefly how information flows through the system
 
@@ -6,24 +6,26 @@
   image("system-architecture.pdf", width: 60%),
   caption: [ATLAS system architecture diagram],
 ) <ARCH>
-@ARCH illustrates how ATLAS conforms to the Sense $->$ Think $->$ Act embedded control
-loop.
+Every 32 ms tick the ATLAS controller runs the three-stage Sense $->$ Think $->$ Act
+loop in order; @ARCH groups its components by stage, with arrows showing the data that
+crosses each boundary. Information flows in one direction each tick: raw sensor reads
+$arrow$ world snapshot (Sense) $arrow$ filtered state $plus$ chosen action (Think)
+$arrow$ motor and bullet writes (Act).
 
-*Sense* drains four inputs each tick: the world-frame Search Radar cue on ch1
-(`SearchRadarLink`), the turret-relative position from the on-board Fire Control Radar
-when locked (`FireControlRadar`), and ground-hit / bullet-hit resolution pulses on ch2
-and ch3.
+*Sense* reads the Webots devices — radio receivers, the on-board FCR, and the pan/tilt
+joint-angle sensors — and emits a fixed-shape world snapshot for the tick: a Search
+Radar cue (or none), an FCR position (when locked), any hit pulses, and the measured
+boresight. No interpretation happens here. Noise figures and per-stream behaviour are in
+@sec:perception.
 
-*Think* turns those inputs into a chosen action. A 6-state Kalman filter
-($[x, y, z, v_x, v_y, v_z]$) fuses the radar streams, weighting precise FCR
-measurements far above the noisy Search cues; the `BallisticPredictor` propagates that
-estimate to a closed-form intercept, and the `AttackPredictor` learns launch-sector
-patterns online to pre-aim for the next engagement. The `AtlasFSM` reads this
-always-fresh world model and arbitrates the next action, advancing through `IDLE` $->$
-`AIM` $->$ `TRACK_PREDICT` $->$ `ENGAGING` $->$ `RESET` based on lock state,
-convergence, and resolution cues.
+*Think* takes the snapshot and produces a chosen action through three activities:
+*estimation* (the Kalman `TrackFilter` maintains a fused position-velocity estimate),
+*prediction* (the `BallisticPredictor` extrapolates an intercept and the
+`AttackPredictor` learns launch-sector patterns online), and *decision* (the `AtlasFSM`
+arbitrates via guarded transitions over those products). The output is a target pan/tilt
+and a fire flag. The state machine is detailed in @sec:behaviour.
 
-*Act* turns FSM decisions into physical commands: pan/tilt `RotationalMotor` writes slew
-the boresight, and the recycled `Bullet` is teleported to the muzzle and launched when
-the FSM commits to a shot — subject to the anti-friendly-fire pan-angle gate before
-arming.
+*Act* turns that decision into hardware writes: `setPosition()` on the pan and tilt
+motors, and — when the FSM commits to a shot — teleport plus velocity writes on the
+recycled bullet `Solid`. A pan-angle friendly-fire gate sits between the FSM and the
+bullet to suppress shots that would cross the Search Radar's bearing.

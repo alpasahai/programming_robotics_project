@@ -1,4 +1,4 @@
-= Safety and Robustness
+= Safety and Robustness <sec:safety>
 // TODO: Explain safety mechanisms used, for example:
 // ● Collision avoidance
 // ● Boundary limits
