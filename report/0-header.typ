@@ -29,6 +29,7 @@
     [*Author 1:*], [Madeline Abio s5259572],
     [*Author 2:*], [Alpa Sahai s5405889],
     [*GitHub Link:*], [https://github.com/alpasahai/programming_robotics_project.git],
+    [*Youtube Video Link:*], [https://www.youtube.com/watch?v=OWwE-AePol8],  
     [*Specialisation Option Chosen:*], [Embedded Intelligence],
   )
 
