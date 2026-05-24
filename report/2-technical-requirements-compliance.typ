@@ -11,15 +11,14 @@ alignment with each requirement are presented here.
 == General Requirements
 === Inputs
 - World-frame target cue $(x, y, z)$ from the external Search Radar process, delivered
-  over a Webots radio link — the wide-area perception source that drives target
-  acquisition.
+  over a Webots radio link. Fed into the FSM as the `IDLE` → `AIM` trigger (debounced
+  detection count) and the slew target for `AIM`, and into the `AttackPredictor` as the
+  per-launch observation that drives online sector learning.
 - Turret-relative projectile position from ATLAS's own on-board Fire Control Radar,
-  gated by range and FOV and produced only when locked — the precise perception source
-  that drives tracking and engagement.
-
-Additional inputs include pan and tilt joint-angle sensors that report the turret's true
-boresight, ground-hit and bullet-hit resolution pulses from the Attacker process, and
-the Webots simulation clock that drives the per-tick control loop.
+  gated by range and FOV and produced only when locked. Fed into the Kalman
+  `TrackFilter` as the low-noise measurement update, which the
+  `BallisticTrajectoryPredictor` then propagates to an intercept; the lock flag also
+  gates the FSM `AIM` → `TRACK_PREDICT` transition.
 
 === Outputs
 - Pan and tilt motor position commands to the turret's azimuth and elevation actuators,
@@ -29,7 +28,7 @@ the Webots simulation clock that drives the per-tick control loop.
 
 === FSM and Behavioural States
 #figure(
-  image("fsm.pdf", width: 50%),
+  image("fsm.pdf", width: 40%),
   caption: [ATLAS finite state machine (FSM) diagram],
 ) <FSM>
 @FSM shows ATLAS' FSM contains 5 behavioural states, demonstrating alignment with the
