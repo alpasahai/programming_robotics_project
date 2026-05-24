@@ -5,12 +5,13 @@
 // ● Conditions that trigger state transitions
 // Explain why this behaviour model was chosen
 
-ATLAS uses an FSM for autonomous target detection, tracking, prediction, and engagement.
-FSM control gives deterministic behaviour, modular transitions, and a guaranteed
-fail-safe recovery path under noisy sensing. The five states are summarised below; @FSM
-shows the full transition diagram. Sensor processing details (the Kalman filter, fusion
-weighting, and convergence gate) are covered in @sec:perception and are referenced
-rather than repeated here.
+ATLAS uses a finite state machine (FSM) to manage autonomous target detection, tracking,
+prediction, and engagement. FSM control was selected because it provides deterministic
+behaviour, clean, modular state transitions, and a reliable fail-safe recovery during
+the uncertain tracking conditions. The five states are summarised below; @FSM shows the
+full transition diagram. Sensor processing details (the Kalman filter, fusion weighting,
+and convergence gate) are covered in @sec:perception and are referenced rather than
+repeated here.
 
 *`IDLE`.* The turret holds its search beam, or pre-aims at the `AttackPredictor`'s next
 predicted sector, while waiting for a Search Radar cue. On the first cue of a new
