@@ -1,0 +1,407 @@
+# Robustness, Reliability & Safety — design exploration
+
+**Issue:** #49 — *spec: design, spec and plan the safety, robustness and reliability features.*
+**Status:** Draft / idea catalogue for review.
+**Assignment hook:** Marking criterion **"Safety, Robustness & Reliability — 10%"** —
+*"Inclusion of appropriate safety mechanisms and stable operation under different
+conditions."* (`assignment-spec-3003ict-project.pdf`, §8.a).
+
+This document (1) inventories what ATLAS *already* implements against that
+criterion and justifies each item, (2) catalogues new ideas — Madeline's first
+and attributed, then Claude's — with a difficulty-vs-contribution score, and
+(3) recommends a go-forward set sized for the current time crunch.
+
+---
+
+## 0. Context the ideas have to respect
+
+A few facts from the code that constrain what counts as "robustness" here:
+
+- **The radars are not vision sensors — and that is a robustness *feature*.**
+  Both the Fire-Control Radar (`fire_control_radar.py`) and the external Search
+  Radar (`search_radar.py`) derive target position from Webots
+  `Supervisor.getPosition()` (ground truth) plus **Gaussian noise** and a
+  **FOV-cone + range gate**. There is no `Camera` node and no image pipeline
+  anywhere in the controllers. *Radar is, by physics, insensitive to ambient
+  light, glare, shadow, fog, or darkness.* So ATLAS is **already completely
+  robust to visibility/lighting problems by design** — this is a claim we can
+  make and demonstrate, not a gap to fill. This is the basis of idea **M3** below.
+- **The turret fires a real, travelling bullet** (`bullet.py`, ADR-0013) along
+  its aim — not an instant-hit laser. So a bad aim genuinely launches a physical
+  object in that direction. This is what makes a *friendly-fire interlock* (idea
+  **M1**) meaningful rather than cosmetic.
+- **The FSM is already the "SAFETY" module** (`fsm.py`). It owns every state
+  transition and is fully unit-tested, so new safety logic has a clean,
+  test-friendly home — it does not need to be sprinkled across the controller.
+- **The Kalman filter already runs every tick** (`track_filter.predict()` in
+  `atlas_controller.py`, ADR-0003 continuous fusion), so it can *coast* (predict
+  with no measurement) for free — the backbone of any sensor-failure fallback
+  (idea **M2**).
+
+---
+
+## 0.5 The three concepts are distinct (and ideas are tagged to them)
+
+The criterion bundles three *different* properties. Every idea below is tagged
+with the one(s) it addresses — an idea may legitimately address more than one.
+
+- **Safety** — *prevents the system from causing harm.* The turret must never do
+  something dangerous: fire at a friendly asset, fire an unvalidated/wild shot,
+  thrash its motors, or leak a runaway projectile.
+- **Reliability** — *keeps the system doing its job and recovers cleanly when
+  something goes wrong.* Consistent correct operation plus fail-safe recovery to
+  a known-good state (RESET, auto-reset on track loss, clearing stale state).
+- **Robustness** — *tolerates adverse and varying conditions without failing.*
+  Graceful handling of sensor noise, dropouts, disturbances, environment, and
+  sensor failure (Kalman smoothing, gating, graceful degradation, visibility
+  invariance).
+
+Rule of thumb: *Safety = don't do harm · Reliability = keep working / recover ·
+Robustness = cope with bad conditions.*
+
+---
+
+## 1. What ATLAS already implements (with justification)
+
+These are real, in-tree mechanisms that already earn marks under the criterion.
+The report/video should claim them explicitly.
+
+| # | Feature | Category | Where | What it does / why it counts |
+|---|---------|----------|-------|------------------------------|
+| E1 | **RESET state** wipes the Kalman filter, cue, and all engagement bookkeeping | Reliability | `fsm.py:379-409` | Central fail-safe: any abnormal end-of-engagement returns the system to a known-clean `IDLE`. This *is* the pitch's "automatic reset" promise. |
+| E2 | **Out-of-range auto-reset** — `_target_within_range()` forces RESET when target/intercept leaves `max_range` (10 m) | Reliability | `fsm.py:558-574`, `:372-377` | Directly satisfies the pitch's "reset when the object is lost / no longer in range". |
+| E3 | **Ground-hit / bullet-hit cues pre-empt every active state → RESET** | Safety | `fsm.py:233-238, 272-277, 312-317, 372-377` | The turret stops engaging the instant the threat is resolved or has landed — no firing at a dead target. |
+| E4 | **Kalman filter smooths noisy sensor measurements** | Reliability | `track_filter.py` | The pitch's "explore filtering sensor noise" — already done, with per-sensor noise covariances (`R_fcr` ≪ `R_search`). |
+| E5 | **Acquire debounce** — `acquire_frames=3` consecutive cues before leaving IDLE | Robustness | `fsm.py:55, 249-253` | Rejects single-frame spurious cues; won't slew on a one-off blip. |
+| E6 | **Fire-convergence gate** — the turret does **not** fire in TRACK_PREDICT until the predicted-vs-observed *error gap closes* (`pred_error < track_error_threshold=0.3 m`) for `converge_frames=3` consecutive steps | Reliability + Safety | `fsm.py:334-345` | Fire discipline: it will only shoot once its *own past predictions* have proven accurate, so it consistently waits for a trustworthy track (Reliability) and never looses a wild shot on an unconverged estimate (Safety). This is a real, in-tree fail-safe to claim explicitly. |
+| E7 | **Pan-seam unwrap** prevents the turret whipping a near-360° turn | Robustness | `fsm.py:496-521` | Stable, predictable mechanical motion — "stable operation" in the literal sense. |
+| E8 | **Atomic dual-motor command** — pan & tilt always commanded together | Robustness | `fsm.py:453-494` | No half-slewed states where one axis lags the other. |
+| E12 | **FCR FOV-cone + range gate** — only locks/fuses targets inside the beam | Robustness | `fire_control_radar.py:106-117` | Rejects off-axis returns; the filter is never fed a target the sensor can't actually see. |
+| E13 | **Search-radar track-timeout buffer** holds a track across beam passes, drops it after N misses | Robustness | `search_radar.py:208-258` | Tolerates momentary loss of detection (object briefly disappears) without dropping lock instantly. |
+| E15 | **Stale-cue clearing on RESET** (cue link has no expiry; RESET clears it) | Reliability | `search_radar_link.py:55-64`, `fsm.py:402` | Prevents a leftover cue from re-triggering an engagement against a phantom target. |
+
+*(E-numbers are stable labels; the gaps are the items moved to "Excluded" below.)*
+
+### Excluded — simulation mechanics / plumbing, **not** robot S/R/R
+
+These exist in the code but are Webots/simulation housekeeping or software
+plumbing, not genuine *robot* safety/reliability/robustness. We deliberately do
+**not** claim them under this criterion (claiming them would be a weak,
+easily-challenged answer in the viva):
+
+- **Bullet max-lifetime timeout** (`atlas_controller.py:92, 299-305`) — bookkeeping
+  for the single *recycled* Webots bullet node, not a real munitions safety system.
+- **"One bullet at a time" recycling** (`atlas_controller.py:283-293`) — a
+  consequence of there being one reusable bullet node in the sim. *(A genuine
+  fire-rate interlock would be a real feature — but that's a new idea, not an
+  existing one.)*
+- **NaN guard on joint sensors** (`atlas_controller.py:249-252`) — handles a Webots
+  first-tick `getValue()` artifact, not a real sensor fault.
+- **Fail-fast on missing DEF nodes** (`atlas_controller.py:131, 154`) — world-file /
+  config plumbing; belongs under *Code Quality*, not S/R/R.
+
+### Bill of existing features, grouped by the three concepts
+
+The same mechanisms, organised by *which property they deliver and how*. Several
+appear under more than one concept — that is expected and noted.
+
+**SAFETY — *the system is prevented from causing harm.***
+
+| Feature | How it meets Safety |
+|---------|---------------------|
+| E3 Hit-cue pre-emption | Stops engaging the instant the threat is resolved/landed — no firing at a dead target. |
+| E6 Fire-convergence gate | Won't loose a shot until the predicted-vs-observed error gap has closed for 3 steps — no wild shots on an unconverged track. |
+
+**RELIABILITY — *the system keeps working and recovers cleanly.***
+
+| Feature | How it meets Reliability |
+|---------|--------------------------|
+| E1 RESET state | Any abnormal end-of-engagement returns to a known-clean IDLE — the central fail-safe recovery. |
+| E2 Out-of-range auto-reset | A lost / out-of-range target deterministically triggers recovery rather than hanging. |
+| E4 Kalman noise filtering | Consistent state estimate from noisy measurements — stable tracking run to run. |
+| E6 Fire-convergence gate | Fires only on a track that has *proven* accurate, so engagement outcomes are repeatable, not lucky. |
+| E15 Stale-cue clearing on RESET | A fresh cycle never acts on leftover state from the previous engagement. |
+
+**ROBUSTNESS — *the system tolerates adverse / varying conditions.***
+
+| Feature | How it meets Robustness |
+|---------|-------------------------|
+| E4 Kalman noise filtering | Absorbs per-measurement sensor noise without losing the track. |
+| E5 Acquire debounce | Rejects single-frame spurious cues — won't slew on a blip. |
+| E7 Pan-seam unwrap | Stable motor motion across the ±π discontinuity — no twitch under bearing jitter. |
+| E8 Atomic dual-motor command | No half-slewed states where one axis lags the other. |
+| E12 FCR FOV/range gate | Rejects off-axis/out-of-range returns — the filter is never fed garbage. |
+| E13 Search-radar track-timeout | Tolerates momentary loss of detection (object briefly disappears) without instantly dropping lock. |
+
+**Headline:** *Reliability* is well covered (E1/E2/E4/E6/E15) and so is
+*Robustness* (E4/E5/E7/E8/E12/E13). *Safety* is the thinnest column — only E3 and
+E6 are genuine robot-level safety behaviours (the bullet-recycling/NaN/missing-node
+items are simulation plumbing, excluded above) — **and the pitch's
+specifically-promised Safety mechanism, "if the motors operate above a movement
+frequency, the system enters RESET", is NOT implemented** (see W1). That makes
+Safety the area most in need of new work: closing the watchdog gap (idea C1) and
+adding the friendly-fire interlock (M1) are the highest-priority additions.
+
+### Partially implemented / scaffolded
+
+- **W1 — Motor over-frequency → RESET:** promised in the pitch, **not in code**.
+  No watchdog on slew rate or command thrash anywhere. → addressed by idea **C1**.
+- **W2 — Multi-object prioritisation:** the Search Radar maintains a multi-track
+  buffer and selects one target internally, but ATLAS only ever receives a
+  single cue position (`SearchRadarLink`). There is no *explicit, justifiable*
+  prioritisation policy (nearest? soonest-impact?). → idea **C5**.
+- **W3 — Cue freshness timeout:** explicitly flagged as a deliberate non-feature
+  in `search_radar_link.py:7-9` ("freshness timeout … intentionally NOT
+  implemented"). A known, documented hook. → idea **C2**.
+
+---
+
+## 2. Madeline's ideas (author: Madeline)
+
+> These three were proposed by Madeline directly. Captured verbatim in intent,
+> then assessed.
+
+### M1 — Friendly-fire prevention: make it impossible for the FCR/turret to fire at the Search Radar
+
+**Addresses: Safety** (primary — prevents the system causing harm to a friendly
+asset).
+
+**Idea:** the turret must never launch a bullet in a direction that would hit a
+friendly asset (the Search Radar node sitting in the world).
+
+**Assessment:** Excellent fit, and the strongest demo of the three. The Search
+Radar's world position is known to ATLAS (it's a fixed node). Add a **keep-out
+angular sector** (a "restrictive fire line" / forbidden sector — exactly the
+fratricide-prevention measure real fire-control doctrine uses) around the
+friendly asset's bearing. The fire-inhibit interlock vetoes the
+`TRACK_PREDICT → ENGAGING` transition (or zeroes the fire command) whenever the
+intercept bearing falls inside that cone. This is genuine **multi-condition
+decision logic** + a **safety interlock**, both explicitly rewarded by the
+rubric, and it's visually obvious in the video ("watch — it refuses to shoot
+when the threat lines up with our own radar").
+
+- **Difficulty:** Low–Medium. New pure helper on the FSM + one transition guard;
+  fully unit-testable with stub bearings. No new Webots nodes required.
+- **Contribution:** High. Closes a safety story the rubric loves and demos well.
+
+### M2 — Sensor-failure fallback: radars operate independently via Kalman modes
+
+**Addresses: Robustness** (primary — tolerates a failed sensor) **+ Reliability**
+(keeps tracking / recovers instead of stalling).
+
+**Idea:** if a sensor dies, the system degrades gracefully instead of stalling:
+(a) if the FCR can't get cues from the Search Radar, the FCR runs a **backup
+search sweep** to find the target itself; (b) if the Search Radar dies or FCR
+perception fails, the turret aims from whichever cue source is still alive.
+
+**Assessment:** This is textbook **graceful degradation** (the same principle
+AESA radars and UAV fire-control systems use — degrade capability, keep the
+safety/mission function alive). It is the highest-value robustness idea because
+it exercises the existing dual-sensor fusion *and* the always-warm Kalman filter
+(which can coast on `predict()` alone). Concretely, three fallback behaviours:
+
+1. **No cue for N steps in IDLE → autonomous backup PAN sweep** (instead of
+   holding the fixed idle pose), so ATLAS can self-acquire when the Search Radar
+   is offline. Replaces today's "stuck pointing at the sky" behaviour.
+2. **FCR lock lost mid-track → coast on the Kalman prediction** (dead-reckoning)
+   for a bounded number of steps, and/or fall back to **cue-only aiming**, before
+   giving up to RESET. The filter already predicts every tick, so this is mostly
+   wiring + a degraded-mode flag.
+3. **Search Radar silent during track → continue on FCR alone** (already the
+   nominal path once locked) — making this explicit + logged demonstrates the
+   single-sensor degraded mode.
+
+- **Difficulty:** Medium. Needs a "sensor health / staleness" notion and 1–2 new
+  FSM sub-behaviours (a backup-sweep mode and a coast timer). Leverages existing
+  Kalman + fusion, so no new estimator work.
+- **Contribution:** Very High. Hits Robustness *and* Reliability *and* doubles as
+  evidence for the "sensor fusion / real-time logic" specialisation marks.
+
+### M3 — Demonstrate complete robustness to lighting / visibility conditions
+
+**Addresses: Robustness** (primary — tolerance to adverse environmental/visibility
+conditions).
+
+**Idea:** show — and reason — that ATLAS's tracking is **completely robust against
+visibility problems** (changing lighting, glare, darkness, fog/haze).
+
+**Assessment — this is a robustness *strength* of our design, not a gap.** Because
+ATLAS senses via **radar** (`getPosition()` + Gaussian noise + FOV/range gating)
+rather than a camera (see §0), its detection pipeline has **no dependency on
+ambient light whatsoever**. A camera-based tracker would degrade in glare, low
+light, or fog; ATLAS does not. That is precisely the point worth making, and it
+splits into a *demonstration* and a *justification*:
+
+- **Demonstration (do this):** add a **lighting/visibility stress demo** to the
+  Webots world — sweep the scene `PointLight`/`DirectionalLight` intensity from
+  bright to near-dark (and optionally add a `Fog` node / background haze) **while a
+  live engagement runs**, and capture the telemetry showing track error, lock
+  state, and hit outcome are **unchanged**. This is a striking, literally-true
+  robustness clip for the video: "we turn the lights off and it keeps tracking."
+  Cost is low — it's a scene/lighting change plus reading the existing telemetry,
+  **no controller code changes**, because nothing in the perception path reads
+  pixels.
+- **Justification (write this up):** in the report, state the design rationale —
+  radar/position sensing is invariant to illumination by construction — so ATLAS
+  is robust to the entire class of visibility faults. This is a stronger, more
+  defensible claim in the viva than any vision tweak: we can explain *why* it
+  holds, not just that it passed one test.
+- **Pair it with the environmental-noise matrix** (the things radar *does* care
+  about): elevated sensor noise σ, cue dropout, process/wind-drag disturbance,
+  target speed. Together, "immune to visibility faults **and** stable under sensor
+  noise" is the complete "stable operation under different conditions" story.
+
+> Note: this is the recommended path. Adding a real `Camera` + vision detector
+> would make lighting matter *negatively* (introduce a fragility we don't have) —
+> the opposite of the goal — and is a large, risky change. **Do not** add a camera
+> to chase this; our radar design already wins the argument.
+
+- **Difficulty:** Low. Scene lighting/fog change + reading existing telemetry; no
+  perception-code changes.
+- **Contribution:** High for the demo + report — it's a literally-true,
+  visually-obvious robustness claim with a clean engineering justification.
+
+---
+
+## 3. Claude's additional ideas
+
+### C1 — Motor over-slew / command-thrash watchdog → RESET *(closes the pitch's own promise)*
+
+**Addresses: Safety** (primary — stops hazardous motor motion) **+ Reliability**
+(recovers to a clean IDLE via RESET).
+
+A watchdog that trips RESET when the commanded slew rate exceeds a limit, or when
+the pan command reverses sign repeatedly within a short window (thrash). This is
+**exactly the pitch's stated Safety mechanism** ("motors above a movement
+frequency → RESET"), currently unbuilt (W1). Watchdog-drives-system-to-safe-state
+is a standard embedded-safety pattern.
+- **Difficulty:** Low. A small rate/thrash detector feeding the existing RESET.
+- **Contribution:** High — it converts a *promised-but-missing* deliverable into a
+  real one, which assessors will check against the pitch.
+
+### C2 — Cue freshness timeout in `SearchRadarLink` *(closes a documented hook)*
+
+**Addresses: Reliability** (primary — won't act on phantom/stale state) **+
+Robustness** (detects the sensor-silence condition that M2 degrades on).
+
+Drop a stale cue after N steps of radio silence (the code itself flags this as a
+deliberate omission, W3). Prevents acting on a phantom target after the Search
+Radar dies — and is the natural trigger for M2's degraded modes.
+- **Difficulty:** Low. A counter + a step input on `get_cue()`. Already scoped by
+  the existing docstring.
+- **Contribution:** Medium-High (also an enabler for M2).
+
+### C3 — Fire-solution validity gate (no shooting the ground / behind / over limits)
+
+**Addresses: Safety** (primary — refuses a hazardous/invalid shot).
+
+Beyond range (E2), reject intercepts that are below ground, behind the turret, or
+outside the tilt envelope before allowing ENGAGING. More multi-condition decision
+logic; pairs naturally with M1 as one "is this shot allowed?" predicate.
+- **Difficulty:** Low. Pure predicate on the intercept, unit-testable.
+- **Contribution:** Medium.
+
+### C4 — Covariance-based track-quality gate
+
+**Addresses: Reliability** (primary — only fire when the estimate is trustworthy)
+**+ Safety** (a low-confidence shot is a hazardous shot).
+
+Use the Kalman covariance `P` (already maintained) to refuse firing while
+positional uncertainty is high — a more principled companion to the
+`converge_frames` heuristic (E6). Shows real understanding of the filter.
+- **Difficulty:** Medium. Read `P`, pick a trace/eigenvalue threshold, tune.
+- **Contribution:** Medium-High (strong "intelligence" talking point in the viva).
+
+### C5 — Explicit multi-target prioritisation policy
+
+**Addresses: Robustness** (primary — copes with a multi-target environment without
+losing coherence).
+
+Make the Search Radar's target selection an explicit, justifiable rule —
+**soonest-impact** (lowest predicted time-to-ground) or **nearest** — instead of
+an implicit pick. Honours the pitch's "multiple objects → prioritisation".
+- **Difficulty:** Medium (needs a clear rule + maybe multiple projectiles in-scene
+  to demo).
+- **Contribution:** Medium. Good if the demo world will actually have >1 target;
+  low value if it won't.
+
+### C6 — Tilt soft-limit / mechanical envelope enforcement
+
+**Addresses: Safety** (primary — keeps the turret inside its mechanical envelope).
+
+The code notes pan has no limits; enforce soft limits and refuse out-of-envelope
+aim commands. Mechanical-safety story.
+- **Difficulty:** Low.
+- **Contribution:** Low-Medium (somewhat overlaps C3).
+
+---
+
+## 4. Scorecard
+
+Effort = engineering cost under time crunch (lower is better). Value = marks +
+demo/viva strength. ★ = relative.
+
+| Idea | Concept(s) | Effort | Value | Closes a promise? | Notes |
+|------|-----------|:------:|:-----:|:-----------------:|-------|
+| **M1** Friendly-fire keep-out | Safety | ★★ | ★★★★ | new safety story | Flagship safety demo |
+| **M2** Sensor-failure graceful degradation | Robustness + Reliability | ★★★ | ★★★★★ | reliability + fusion | Flagship robustness demo |
+| **M3** Lighting/visibility robustness demo + noise matrix | Robustness | ★ | ★★★★ | "different conditions" | Literally-true radar win; no code change |
+| ~~M3-alt~~ Real camera + lighting | (Robustness) | ★★★★★ | ★ | — | **Avoid — adds fragility we don't have** |
+| **C1** Motor watchdog → RESET | Safety + Reliability | ★ | ★★★★ | **pitch Safety promise** | Cheapest high-value item |
+| **C2** Cue freshness timeout | Reliability + Robustness | ★ | ★★★ | code hook + enables M2 | Do alongside M2 |
+| **C3** Fire-solution validity gate | Safety | ★ | ★★ | — | Bundle with M1 |
+| **C4** Covariance fire gate | Reliability + Safety | ★★★ | ★★★ | — | Best viva talking point |
+| **C5** Multi-target prioritisation | Robustness | ★★★ | ★★ | pitch Robustness (partial) | Only if demo has >1 target |
+| **C6** Tilt soft-limits | Safety | ★ | ★★ | — | Overlaps C3 |
+
+---
+
+## 5. Recommendation (go-forward set for the time crunch)
+
+Ship a **tight, high-leverage bundle** that closes the written promises and demos
+clearly, and explicitly *defer* the expensive items.
+
+**Tier 1 — do these (high value, low/medium effort):**
+1. **C1 — Motor over-slew watchdog → RESET.** Cheapest way to turn a
+   *promised-but-missing* deliverable into a real one. Assessors will diff the
+   pitch against the build; this removes a guaranteed ding.
+2. **M1 — Friendly-fire keep-out interlock**, implemented together with **C3**
+   (fire-solution validity gate) as one "is this shot permitted?" predicate.
+   Flagship safety demo, low-medium effort, very strong on video and in the viva.
+3. **M2 (scoped) — Graceful degradation**, built on **C2** (cue freshness
+   timeout) as its trigger. Minimum viable version: *cue-loss → coast on Kalman
+   for N steps → backup PAN sweep → RESET*. This is the single best Robustness +
+   Reliability story and reuses the existing filter/fusion.
+
+4. **M3 — Lighting/visibility robustness demo + noise matrix.** Near-free (a scene
+   lighting/fog sweep + the telemetry we already log, **no controller changes**)
+   and gives a literally-true, video-friendly "lights off, still tracking" clip
+   plus a clean viva justification: radar is illumination-invariant by
+   construction, so ATLAS is robust to the entire class of visibility faults.
+
+**Tier 2 — do if time remains:**
+5. **C4 — Covariance fire gate.** Best single "we understand our Kalman filter"
+   talking point for the individual-understanding marks.
+
+**Defer / avoid under time pressure:**
+- **Real camera + vision detector:** would *introduce* the lighting fragility we
+  currently don't have — the opposite of the goal — and changes the whole sensing
+  model. Avoid; argue the radar design's light-invariance in the report instead.
+- **C5 (multi-target prioritisation):** only worth it if the demo world will
+  actually contain multiple simultaneous targets. Otherwise it's invisible.
+- **C6:** fold into C3 rather than building separately.
+
+**Why this set:** it (a) closes both pitch promises that are currently unbuilt or
+partial (C1 for Safety, M2/C2 for Reliability), (b) leads with the two demos that
+read clearly on a 3-minute video (M1 refusing a fratricidal shot; M2 surviving a
+killed sensor), and (c) avoids the only genuinely expensive idea (M3b). Total
+Tier-1 effort is small because every item attaches to an existing, tested seam —
+the FSM transitions, the RESET handler, and the always-running Kalman filter.
+
+---
+
+## Sources
+
+- Graceful degradation in radar / fire-control: [Defence Science Journal — Graceful Degradation, Airborne Surveillance Radar](https://publicationsdrdo.in/index.php/dsj/article/view/12135); [ScienceDirect — Sensor fusion & adaptive control for UAV fire control, graceful degradation under adverse conditions](https://www.sciencedirect.com/science/article/pii/S2090447925003545); [Risknowlogy — Degraded Mode in Safety Systems](https://risknowlogy.com/articles/detail/17309/)
+- Fratricide prevention / sectors of fire / restrictive fire line: [US Army FM 3-21.8 — Infantry Rifle Platoon and Squad](https://www.marines.mil/Portals/1/Publications/FM%203-21.8%20%20The%20Infantry%20Rifle%20Platoon%20and%20Squad_2.pdf); [US Patent 9,772,155 — Prevention of friendly fire incidents](https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/9772155)
+- Watchdog-to-safe-state pattern: [Ganssle — Designing Great Watchdog Timers for Embedded Systems](https://www.ganssle.com/watchdogs.htm)
